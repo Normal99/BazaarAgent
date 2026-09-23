@@ -60,59 +60,212 @@ async function route() {
 }
 
 // ---------------------------------------------------------------------------
+// Feed: filters, sorting, and cards that justify their own ranking
+// ---------------------------------------------------------------------------
+
+const FILTER_KEY = "bazaar.filters"
+const defaultFilters = () => ({ sort: "score", minScore: 0, maxPrice: null, seller: "alle", hideAuction: false, q: "" })
+
+function loadFilters() {
+  try {
+    return { ...defaultFilters(), ...JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}") }
+  } catch {
+    return defaultFilters()
+  }
+}
+function saveFilters(f) {
+  try { localStorage.setItem(FILTER_KEY, JSON.stringify(f)) } catch {}
+}
+
+let filters = loadFilters()
+let feedCache = null
+
+const SORTS = {
+  score: { label: "Best funn", fn: (a, b) => (b.score ?? 0) - (a.score ?? 0) },
+  price: { label: "Lavest pris", fn: (a, b) => a.price - b.price },
+  distance: { label: "Nærmest", fn: (a, b) => (a.trip?.roadKm ?? 1e9) - (b.trip?.roadKm ?? 1e9) },
+  newest: { label: "Nyest", fn: (a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0) },
+  mileage: { label: "Lavest km", fn: (a, b) => (a.mileage ?? 1e9) - (b.mileage ?? 1e9) },
+}
+
+function applyFilters(deals) {
+  const q = filters.q.trim().toLowerCase()
+  return deals
+    .filter((d) => !d.disqualified)
+    .filter((d) => (d.score ?? 0) >= filters.minScore)
+    .filter((d) => (filters.maxPrice == null ? true : d.price <= filters.maxPrice))
+    .filter((d) => (filters.seller === "alle" ? true : (d.dealerSegment ?? "").toLowerCase().startsWith(filters.seller)))
+    .filter((d) => (filters.hideAuction ? d.listingType !== "auction" : true))
+    .filter((d) => (q ? `${d.heading} ${d.make ?? ""} ${d.location ?? ""}`.toLowerCase().includes(q) : true))
+    .sort(SORTS[filters.sort]?.fn ?? SORTS.score.fn)
+}
+
+function filterBar(total, shown) {
+  const opts = Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${filters.sort === k ? " selected" : ""}>${v.label}</option>`).join("")
+  const active = filters.minScore > 0 || filters.maxPrice != null || filters.seller !== "alle" || filters.hideAuction || filters.q
+  return `<div class="filters">
+    <div class="filter-row">
+      <input id="f-q" class="search" type="search" placeholder="Søk merke, modell, sted…" value="${esc(filters.q)}">
+      <select id="f-sort" class="select">${opts}</select>
+      <button id="f-more" class="chip${active ? " on" : ""}" aria-expanded="false">Filter${active ? " •" : ""}</button>
+    </div>
+    <div class="filter-panel" id="f-panel" hidden>
+      <label>Minste score <output id="f-score-out">${filters.minScore.toFixed(1)}</output>
+        <input id="f-score" type="range" min="0" max="10" step="0.5" value="${filters.minScore}"></label>
+      <label>Maks pris
+        <input id="f-price" type="number" inputmode="numeric" placeholder="ingen grense" value="${filters.maxPrice ?? ""}"></label>
+      <div class="seg" role="group" aria-label="Selger">
+        ${["alle", "privat", "forhandler"].map((v) => `<button data-seller="${v}" class="${filters.seller === v ? "on" : ""}">${v[0].toUpperCase()}${v.slice(1)}</button>`).join("")}
+      </div>
+      <label class="check"><input id="f-auction" type="checkbox"${filters.hideAuction ? " checked" : ""}> Skjul auksjoner</label>
+      <button id="f-reset" class="ghost">Nullstill</button>
+    </div>
+    <p class="count">${shown} av ${total} annonser</p>
+  </div>`
+}
+
+function wireFilters(rerender) {
+  const $ = (id) => document.getElementById(id)
+  const update = (patch) => { filters = { ...filters, ...patch }; saveFilters(filters); rerender() }
+
+  $("f-sort").onchange = (e) => update({ sort: e.target.value })
+  $("f-more").onclick = () => {
+    const panel = $("f-panel")
+    panel.hidden = !panel.hidden
+    $("f-more").setAttribute("aria-expanded", String(!panel.hidden))
+  }
+  // Debounced so typing does not re-render on every keystroke.
+  let timer
+  $("f-q").oninput = (e) => {
+    clearTimeout(timer)
+    const value = e.target.value
+    timer = setTimeout(() => update({ q: value }), 200)
+  }
+  const score = $("f-score")
+  if (score) {
+    score.oninput = (e) => { $("f-score-out").textContent = Number(e.target.value).toFixed(1) }
+    score.onchange = (e) => update({ minScore: Number(e.target.value) })
+  }
+  const price = $("f-price")
+  if (price) price.onchange = (e) => update({ maxPrice: e.target.value ? Number(e.target.value) : null })
+  const auction = $("f-auction")
+  if (auction) auction.onchange = (e) => update({ hideAuction: e.target.checked })
+  for (const b of document.querySelectorAll("[data-seller]")) b.onclick = () => update({ seller: b.dataset.seller })
+  const reset = $("f-reset")
+  if (reset) reset.onclick = () => update(defaultFilters())
+}
+
+// ---------------------------------------------------------------------------
 // Deals
 // ---------------------------------------------------------------------------
 
 async function viewDeals({ watchOnly }) {
   title.textContent = watchOnly ? "Følger" : "Funn"
-  const data = await api("/api/deals?limit=60")
-  let deals = data.deals.filter((d) => !d.disqualified)
-  if (watchOnly) {
-    const watched = await api("/api/deals?limit=200")
-    deals = watched.deals.filter((d) => d.watched)
+  if (!feedCache) feedCache = await api("/api/deals?limit=250")
+  const pool = watchOnly ? feedCache.deals.filter((d) => d.watched) : feedCache.deals
+
+  const render = () => {
+    const deals = watchOnly ? pool.filter((d) => !d.disqualified) : applyFilters(pool)
+
+    if (pool.length === 0) {
+      main.innerHTML = watchOnly
+        ? `<p class="empty">Ingen biler følges ennå.<br><span class="hint">Trykk stjernen på et funn for å følge prisen.</span></p>`
+        : `<p class="empty">Ingenting scoret ennå.<br><span class="hint">Kjør <code>./bazaar score</code>.</span></p>`
+      return
+    }
+
+    main.innerHTML =
+      (watchOnly ? "" : filterBar(pool.length, deals.length)) +
+      (deals.length === 0
+        ? `<p class="empty">Ingen treff med disse filtrene.<br><span class="hint">Prøv å senke minste score eller heve maks pris.</span></p>`
+        : `<div class="cards">${deals.map(card).join("")}</div>`)
+
+    if (!watchOnly) wireFilters(render)
+    wireCards(render)
   }
-  if (deals.length === 0) {
-    main.innerHTML = `<p class="empty">${watchOnly ? "Ingen biler følges ennå." : "Ingenting scoret ennå. Kjør <code>./bazaar score</code>."}</p>`
-    return
-  }
-  main.innerHTML = `<div class="cards">${deals.map(card).join("")}</div>`
-  for (const el of main.querySelectorAll(".card")) el.onclick = () => (location.hash = `#/deal/${el.dataset.id}`)
+  render()
 }
 
+/** Card interactions: open the detail, or toggle watching without leaving the feed. */
+function wireCards(rerender) {
+  for (const el of main.querySelectorAll(".card")) {
+    el.onclick = (e) => {
+      if (e.target.closest("[data-watch]")) return
+      location.hash = `#/deal/${el.dataset.id}`
+    }
+  }
+  for (const b of main.querySelectorAll("[data-watch]")) {
+    b.onclick = async (e) => {
+      e.stopPropagation()
+      const id = Number(b.dataset.watch)
+      const { watched } = await fetch(`/api/watch/${id}`).then((r) => r.json())
+      const row = feedCache?.deals.find((d) => d.adId === id)
+      if (row) row.watched = watched
+      b.classList.toggle("on", watched)
+      b.textContent = watched ? "★" : "☆"
+      b.setAttribute("aria-label", watched ? "Slutt å følge" : "Følg denne bilen")
+    }
+  }
+}
+
+/**
+ * One listing in the feed.
+ *
+ * Ordered by what you decide on: price and how it compares to the market
+ * first, then the facts that change whether it is worth a trip, then the
+ * warnings. The score sits in the corner with its reasoning behind a tap,
+ * because a ranking you cannot interrogate is one you end up ignoring.
+ */
 function card(d) {
   const badges = []
-  if (d.residualPct != null)
-    badges.push(
-      d.residualPct >= 0
-        ? `<span class="badge under">${pct(d.residualPct)} under marked</span>`
-        : `<span class="badge over">${pct(-d.residualPct)} over marked</span>`,
-    )
-  // The case the whole project exists for gets its own badge.
   if (d.haggleable) badges.push(`<span class="badge haggle">${kr(d.overBudgetBy)} over — forhandlebart</span>`)
-  // A car missing something you said you must have is not a deal at all, so it
-  // is called out before price, not after.
   if (d.missingRequired > 0) badges.push(`<span class="badge over">mangler ${d.missingRequired} du må ha</span>`)
   else if (d.requirements?.length) {
     const met = d.requirements.filter((r) => r.status === "ja").length
     if (met > 0) badges.push(`<span class="badge under">${met}/${d.requirements.length} ønsker ✓</span>`)
   }
-  // A starting bid is not an asking price; the badge stops the number reading
-  // as a bargain it may not be.
+  // A repost means it did not sell last time — invisible on finn, and the
+  // strongest thing you can walk into a negotiation knowing.
+  if (d.relisted) badges.push('<span class="badge relist">lagt ut på nytt</span>')
   if (d.listingType === "auction") badges.push('<span class="badge low">auksjon — startbud</span>')
   if (d.confidence === "low") badges.push('<span class="badge low">usikkert anslag</span>')
 
-  return `<button class="card" data-id="${d.adId}">
-    <div class="card-row">
-      ${d.thumb ? `<img src="${esc(d.thumb.replace("/dynamic/default/", "/dynamic/480w/"))}" alt="" loading="lazy">` : ""}
-      <div class="card-body">
-        <span class="score ${d.score >= 8 ? "hot" : ""}">${(d.score ?? 0).toFixed(1)}</span>
-        <h3>${esc(d.heading)}</h3>
-        <div class="meta">${d.year ?? "—"} · ${km(d.mileage)} · ${esc(d.dealerSegment ?? "")} · ${esc(d.location ?? "")}${d.trip ? ` · ~${d.trip.roadKm} km` : ""}</div>
-        <div class="price">${kr(d.price)}</div>
-        ${badges.join("")}
-      </div>
+  const delta =
+    d.residualPct == null
+      ? ""
+      : d.residualPct >= 0
+        ? `<span class="delta good">${pct(d.residualPct)} under marked</span>`
+        : `<span class="delta bad">${pct(-d.residualPct)} over marked</span>`
+
+  const facts = [
+    d.year,
+    d.mileage != null ? km(d.mileage) : null,
+    d.dealerSegment,
+    d.location,
+    d.trip ? `${d.trip.roadKm} km unna` : null,
+  ].filter(Boolean)
+
+  return `<article class="card" data-id="${d.adId}" tabindex="0">
+    <div class="card-media">
+      ${d.thumb ? `<img src="${esc(d.thumb.replace("/dynamic/default/", "/dynamic/480w/"))}" alt="" loading="lazy" decoding="async">` : '<div class="noimg">ingen bilde</div>'}
+      <button class="watch${d.watched ? " on" : ""}" data-watch="${d.adId}"
+              aria-label="${d.watched ? "Slutt å følge" : "Følg denne bilen"}">${d.watched ? "★" : "☆"}</button>
+      ${scoreChip(d)}
     </div>
-  </button>`
+    <div class="card-body">
+      <h3>${esc(d.heading)}</h3>
+      <div class="pricerow"><span class="price">${kr(d.price)}</span>${delta}</div>
+      <p class="facts">${facts.map(esc).join(" · ")}</p>
+      ${badges.length ? `<div class="badges">${badges.join("")}</div>` : ""}
+    </div>
+  </article>`
+}
+
+/** The score, with the reasoning that produced it available on the detail view. */
+function scoreChip(d) {
+  const score = d.score ?? 0
+  const tone = score >= 8.5 ? "hot" : score >= 7 ? "warm" : "cool"
+  return `<span class="score ${tone}" title="${esc((d.parts ?? []).map((p) => `${p.label} ${p.delta >= 0 ? "+" : ""}${p.delta.toFixed(1)}`).join("\n"))}">${score.toFixed(1)}</span>`
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +312,24 @@ async function viewDeal(adId) {
         <dt>Sikkerhet</dt><dd>${esc(v.confidence ?? "—")}</dd>
       </dl>
       ${v.confidence === "low" ? '<p style="color:var(--warn);font-size:13px;margin:10px 0 0">Få eller ulike sammenligningsbiler — bruk tallet som pekepinn, ikke som argument.</p>' : ""}
+    </div>` : ""}
+
+    ${v?.parts?.length ? `<div class="section">
+      <h2>Hvorfor ${(v.score ?? 0).toFixed(1)}</h2>
+      ${scoreBreakdown(v.parts)}
+    </div>` : ""}
+
+    ${d.relist ? `<div class="section">
+      <h2>Lagt ut på nytt</h2>
+      <p style="margin:0 0 8px">Samme bil lå ute for ${d.relist.daysBetween} dager siden til <strong>${kr(d.relist.previousPrice)}</strong>${
+        d.listing.price < d.relist.previousPrice ? ` — nå ${kr(d.relist.previousPrice - d.listing.price)} lavere.` : "."
+      }</p>
+      <p style="margin:0;color:var(--text-muted);font-size:13px">Den ble ikke solgt forrige gang. Det er et av de sterkeste kortene du har i en forhandling, og det står ingen steder på FINN.</p>
+    </div>` : ""}
+
+    ${d.priceHistory?.length > 1 ? `<div class="section">
+      <h2>Prishistorikk</h2>
+      ${priceHistory(d.priceHistory)}
     </div>` : ""}
 
     ${v?.requirements?.length ? `<div class="section">
@@ -220,6 +391,61 @@ async function viewDeal(adId) {
   if (copy) copy.onclick = () => {
     navigator.clipboard.writeText(p.rationale.join("\n")).then(() => (copy.textContent = "Kopiert ✓"))
   }
+}
+
+/**
+ * What made the score what it is.
+ *
+ * Diverging bars from a centre line: everything above the line helped, below
+ * hurt. The sign is in the number as well as the colour, so the reading never
+ * depends on distinguishing green from red.
+ */
+function scoreBreakdown(parts) {
+  const max = Math.max(1, ...parts.map((p) => Math.abs(p.delta)))
+  return `<ul class="bars">${parts
+    .map((p) => {
+      const width = (Math.abs(p.delta) / max) * 50
+      const positive = p.delta >= 0
+      return `<li>
+        <span class="bar-label">${esc(p.label)}</span>
+        <span class="bar-track">
+          <span class="bar ${positive ? "pos" : "neg"}" style="width:${width.toFixed(1)}%;${positive ? "left:50%" : `left:${(50 - width).toFixed(1)}%`}"></span>
+          <span class="bar-zero"></span>
+        </span>
+        <span class="bar-val ${positive ? "pos" : "neg"}">${positive ? "+" : "\u2212"}${Math.abs(p.delta).toFixed(1)}</span>
+      </li>`
+    })
+    .join("")}</ul>`
+}
+
+/** Price over time. A seller already cutting is telling you where their floor is. */
+function priceHistory(history) {
+  const prices = history.map((h) => h.price)
+  const lo = Math.min(...prices)
+  const hi = Math.max(...prices)
+  const first = prices[0]
+  const last = prices[prices.length - 1]
+  const drop = first - last
+
+  const W = 600, H = 120, pad = 8
+  const x = (i) => pad + (i / Math.max(1, history.length - 1)) * (W - pad * 2)
+  const y = (v) => H - pad - ((v - lo) / Math.max(1, hi - lo)) * (H - pad * 2)
+  const path = history.map((h, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(h.price).toFixed(1)}`).join("")
+
+  return `<p style="margin:0 0 10px">${
+    drop > 0
+      ? `Satt ned <strong>${kr(drop)}</strong> siden ${new Date(history[0].observed_at).toLocaleDateString("nb-NO")}.`
+      : drop < 0
+        ? `Satt opp ${kr(-drop)} siden ${new Date(history[0].observed_at).toLocaleDateString("nb-NO")}.`
+        : "Uendret pris."
+  }</p>
+  <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Prisutvikling: ${prices.map((p) => kr(p)).join(", ")}">
+    <path d="${path}" fill="none" stroke="var(--series-2)" stroke-width="2" stroke-linejoin="round"/>
+    ${history.map((h, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(h.price).toFixed(1)}" r="4" fill="var(--series-2)" stroke="var(--surface-1)" stroke-width="2"><title>${new Date(h.observed_at).toLocaleDateString("nb-NO")}: ${kr(h.price)}</title></circle>`).join("")}
+  </svg>
+  <table class="data"><thead><tr><th>Dato</th><th>Pris</th></tr></thead><tbody>
+    ${history.map((h) => `<tr><td>${new Date(h.observed_at).toLocaleDateString("nb-NO")}</td><td>${kr(h.price)}</td></tr>`).join("")}
+  </tbody></table>`
 }
 
 // A visual claim links to the photo it came from — imageIndex points into the

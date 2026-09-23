@@ -690,6 +690,60 @@ export class Store {
     return this.db.query("SELECT 1 FROM notified WHERE ad_id = ? AND reason = ?").get(adId, reason) !== null
   }
 
+  /**
+   * An earlier advert for the same car, if there is one.
+   *
+   * Same VIN, same listing type, different ad: the car was put up, did not
+   * sell, and was posted again. finn shows no trace of this and it is among
+   * the strongest things you can know walking into a negotiation.
+   */
+  relistOf(adId: number): { ad_id: number; price: number; first_seen: number; delisted_at: number | null } | null {
+    return this.db
+      .query<{ ad_id: number; price: number; first_seen: number; delisted_at: number | null }, [number, number]>(
+        `SELECT prev.ad_id, prev.price, prev.first_seen, prev.delisted_at
+         FROM listings cur
+         JOIN listings prev
+           ON prev.vin = cur.vin
+          AND prev.listing_type = cur.listing_type
+          AND prev.ad_id <> cur.ad_id
+          AND prev.first_seen < cur.first_seen
+         WHERE cur.ad_id = ? AND cur.vin IS NOT NULL AND prev.vin IS NOT NULL AND ? IS NOT NULL
+         ORDER BY prev.first_seen DESC LIMIT 1`,
+      )
+      .get(adId, adId)
+  }
+
+  /**
+   * Ad ids that are a repost of an earlier advert, for decorating a whole feed.
+   *
+   * A window function rather than a self-join, and the difference is not
+   * academic: the join version took 35.7 seconds on 3800 listings and hung the
+   * web UI. SQLite could not use the partial `listings_vin` index for the
+   * joined side, because that index is declared WHERE vin IS NOT NULL and the
+   * join never constrained prev.vin — so it fell back to a full scan per row.
+   * This is one pass and a sort.
+   */
+  relistedAdIds(): Set<number> {
+    const rows = this.db
+      .query<{ ad_id: number }, []>(
+        `SELECT ad_id FROM (
+           SELECT ad_id, delisted_at,
+                  ROW_NUMBER() OVER (PARTITION BY vin, listing_type ORDER BY first_seen, ad_id) AS seq
+           FROM listings WHERE vin IS NOT NULL
+         ) WHERE seq > 1 AND delisted_at IS NULL`,
+      )
+      .all()
+    return new Set(rows.map((r) => r.ad_id))
+  }
+
+  isWatched(adId: number): boolean {
+    return this.db.query("SELECT 1 FROM watchlist WHERE ad_id = ?").get(adId) !== null
+  }
+
+  watchedAdIds(): Set<number> {
+    return new Set((this.db.query<{ ad_id: number }, []>("SELECT ad_id FROM watchlist").all()).map((r) => r.ad_id))
+  }
+
   markNotified(adId: number, reason: string): boolean {
     const changes = this.db.query("INSERT OR IGNORE INTO notified (ad_id, reason, sent_at) VALUES (?, ?, ?)").run(adId, reason, Date.now())
     return changes.changes > 0

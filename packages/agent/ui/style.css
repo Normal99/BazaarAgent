@@ -98,40 +98,100 @@ body {
 main { padding: var(--gutter); max-width: 900px; margin: 0 auto; }
 .empty { color: var(--text-muted); text-align: center; padding: 48px 0; }
 
+/* ---- filters ---- */
+
+.filters { margin-bottom: 14px; }
+.filter-row { display: flex; gap: 8px; }
+.search, .select, .chip {
+  font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+}
+.search { flex: 1; min-width: 0; }
+.search::-webkit-search-cancel-button { filter: invert(.5); }
+.select { max-width: 40%; }
+.chip { white-space: nowrap; cursor: pointer; }
+.chip.on { border-color: var(--series-1); color: var(--series-1); }
+
+/* `display: grid` outranks the UA stylesheet's [hidden] { display: none },
+   so the panel has to opt out explicitly or it is never actually hidden. */
+.filter-panel[hidden] { display: none; }
+.filter-panel {
+  display: grid; gap: 12px; margin-top: 10px; padding: 14px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.filter-panel label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.filter-panel label.check { display: flex; align-items: center; gap: 8px; }
+.filter-panel input[type="number"] {
+  font: inherit; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface-0); color: var(--text-primary);
+}
+.filter-panel input[type="range"] { accent-color: var(--series-1); }
+.filter-panel output { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.seg button {
+  flex: 1; padding: 9px 4px; border: 0; cursor: pointer; font: inherit; font-size: 13px;
+  background: var(--surface-0); color: var(--text-secondary);
+}
+.seg button.on { background: var(--series-1); color: #fff; }
+.ghost { background: none; border: 0; color: var(--text-muted); font: inherit; cursor: pointer; padding: 4px; text-align: left; }
+.count { color: var(--text-muted); font-size: 12px; margin: 10px 2px 0; }
+
 /* ---- deal cards ---- */
 
-.card {
-  display: block; background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: var(--radius); margin-bottom: 12px; overflow: hidden;
-  text-decoration: none; color: inherit; cursor: pointer;
-  width: 100%; text-align: left; padding: 0; font: inherit;
-}
-.card:hover { border-color: var(--text-muted); }
+.cards { display: grid; gap: 12px; }
 
-.card-row { display: flex; gap: 12px; padding: 12px; }
-.card img {
-  width: 92px; height: 70px; object-fit: cover; border-radius: 8px;
-  background: var(--surface-2); flex-shrink: 0;
+.card {
+  position: relative; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  transition: border-color .12s, transform .12s;
 }
-.card-body { min-width: 0; flex: 1; }
-.card h3 { margin: 0 0 2px; font-size: 15px; font-weight: 600; }
-.card .meta { color: var(--text-muted); font-size: 13px; }
-.card .price { font-size: 17px; font-weight: 700; margin-top: 4px; }
+.card:hover, .card:focus-visible { border-color: var(--text-muted); }
+.card:active { transform: scale(.995); }
+.card:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+/* A real photograph, not a thumbnail: condition is most of the decision and a
+   92px square told you nothing. */
+.card-media { position: relative; aspect-ratio: 16 / 10; background: var(--surface-2); }
+.card-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.noimg { display: grid; place-items: center; height: 100%; color: var(--text-muted); font-size: 13px; }
+
+.watch {
+  position: absolute; top: 8px; left: 8px; z-index: 2;
+  width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgb(0 0 0 / .45); color: #fff; font-size: 19px; line-height: 1;
+  backdrop-filter: blur(4px);
+}
+.watch.on { color: var(--series-2); }
+.watch:hover { background: rgb(0 0 0 / .65); }
 
 .score {
-  float: right; font-weight: 700; font-size: 15px;
-  padding: 2px 8px; border-radius: 999px; background: var(--surface-2);
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  min-width: 42px; text-align: center; padding: 5px 9px; border-radius: 999px;
+  font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
+  background: rgb(0 0 0 / .55); color: #fff; backdrop-filter: blur(4px);
+  cursor: help;
 }
-.score.hot { background: var(--series-2); color: #fff; }
+.score.hot { background: var(--series-2); }
+.score.warm { background: rgb(0 0 0 / .62); }
 
-.badge {
-  display: inline-block; font-size: 12px; font-weight: 600;
-  padding: 3px 8px; border-radius: 999px; margin: 6px 6px 0 0;
-}
+.card-body { padding: 12px 14px 14px; }
+.card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 620; line-height: 1.25; }
+.pricerow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.price { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.delta { font-size: 13px; font-weight: 600; }
+.delta.good { color: var(--good); }
+.delta.bad { color: var(--bad); }
+.facts { margin: 6px 0 0; color: var(--text-muted); font-size: 13px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
 .badge.under { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
 .badge.over  { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
 .badge.haggle { background: color-mix(in srgb, var(--series-2) 18%, transparent); color: var(--series-2); }
+.badge.relist { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
 .badge.low { background: var(--surface-2); color: var(--text-muted); }
+
+.empty .hint { color: var(--text-muted); font-size: 13px; }
 
 /* ---- detail ---- */
 
@@ -164,6 +224,27 @@ ul.findings a { color: var(--series-1); font-size: 13px; }
 .copy { background: var(--series-1); color: #fff; border: 0; border-radius: 8px;
   padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 10px; }
 
+/* ---- score breakdown ---- */
+
+ul.bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.bars li { display: grid; grid-template-columns: 1fr 38% 44px; align-items: center; gap: 10px; }
+.bar-label { font-size: 13px; color: var(--text-secondary); }
+.bar-track { position: relative; height: 14px; background: var(--surface-2); border-radius: 4px; }
+/* The centre line is the anchor: right of it helped, left of it hurt. */
+.bar-zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--border); }
+.bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.bar.pos { background: var(--good); }
+.bar.neg { background: var(--bad); }
+/* The sign is in the number too, so nothing depends on telling the colours apart. */
+.bar-val { font-size: 13px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.bar-val.pos { color: var(--good); }
+.bar-val.neg { color: var(--bad); }
+
+@media (max-width: 460px) {
+  ul.bars li { grid-template-columns: 1fr 30% 40px; gap: 8px; }
+  .bar-label { font-size: 12px; }
+}
+
 /* ---- chart ---- */
 
 .chart-wrap { position: relative; }
@@ -191,7 +272,6 @@ form.add input { padding: 10px; border-radius: 8px; border: 1px solid var(--bord
 form.add button { padding: 10px; border-radius: 8px; border: 0; background: var(--series-1);
   color: #fff; font-weight: 600; cursor: pointer; }
 
-@media (min-width: 700px) {
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .cards .card { margin-bottom: 0; }
+@media (min-width: 640px) {
+  .cards { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
 }

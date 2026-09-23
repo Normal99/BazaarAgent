@@ -56,9 +56,15 @@ export function startServer(options: ServerOptions = {}) {
         if (path.startsWith("/api/watch/")) return toggleWatch(store, Number(path.slice("/api/watch/".length)))
 
         // Static UI. Unknown paths fall back to the shell so client routing works.
+        //
+        // `no-cache` means revalidate, not "never cache": the browser keeps the
+        // file but asks whether it changed. Without it a phone happily serves a
+        // months-old app.js after an update, which during development looked
+        // exactly like a rendering bug.
+        const headers = { "cache-control": "no-cache" }
         const file = Bun.file(join(UI_DIR, path === "/" ? "index.html" : path.replace(/^\/+/, "")))
-        if (await file.exists()) return new Response(file)
-        return new Response(Bun.file(join(UI_DIR, "index.html")))
+        if (await file.exists()) return new Response(file, { headers })
+        return new Response(Bun.file(join(UI_DIR, "index.html")), { headers })
       } catch (error) {
         return json({ error: error instanceof Error ? error.message : String(error) }, 500)
       }
@@ -75,6 +81,10 @@ function deals(store: Store, url: URL) {
   const limit = Number(url.searchParams.get("limit") ?? 50)
   const budget = store.listSearches().find((s) => s.budget_nok)?.budget_nok ?? undefined
   const home = loadHome()
+  // Looked up in bulk rather than per row: a feed of 200 would otherwise be
+  // 400 extra queries.
+  const watched = store.watchedAdIds()
+  const relisted = store.relistedAdIds()
 
   return {
     budget,
@@ -105,6 +115,15 @@ function deals(store: Store, url: URL) {
         score: row.score,
         confidence: model.confidence ?? null,
         listingType: row.listing_type,
+        // The score breakdown was computed and stored from the start and never
+        // shown. A ranking you cannot interrogate is one you end up ignoring.
+        parts: model.parts ?? [],
+        watched: watched.has(row.ad_id),
+        relisted: relisted.has(row.ad_id),
+        make: listing?.make ?? null,
+        fuel: listing?.fuel ?? null,
+        transmission: listing?.transmission ?? null,
+        publishedAt: listing?.published_at ?? null,
         requirements: (model.requirements ?? []) as RequirementMatch[],
         missingRequired: ((model.requirements ?? []) as RequirementMatch[]).filter((r) => r.required && r.status === "nei").length,
         disqualified: model.disqualified ?? null,
@@ -251,7 +270,17 @@ function dealDetail(store: Store, adId: number): Response {
         }
       : null,
     priceHistory: history,
-    watched: store.db.query("SELECT 1 FROM watchlist WHERE ad_id = ?").get(adId) !== null,
+    watched: store.isWatched(adId),
+    relist: (() => {
+      const prev = store.relistOf(adId)
+      if (!prev) return null
+      return {
+        previousAdId: prev.ad_id,
+        previousPrice: prev.price,
+        daysBetween: Math.max(0, Math.round((Date.now() - prev.first_seen) / 86_400_000)),
+        stillListed: prev.delisted_at === null,
+      }
+    })(),
   })
 }
 
