@@ -7,24 +7,34 @@ import { stateDir } from "./paths.ts"
 // simply blank on plenty of ads, and a date typed by the person selling the car
 // is worth less than one from the registry regardless.
 //
-// There are two Vegvesen hosts and picking the wrong one is a dead end:
+// Two hosts serve this API and the difference is easy to misread.
 //
-//   akfell-datautlevering.atlas.vegvesen.no  → OAuth with certificate-bound
-//     tokens (RFC 8705, the Maskinporten pattern). Answers every request with
-//     401 unless you hold a virksomhetssertifikat tied to an organisation.
-//   www.vegvesen.no/ws/.../datautlevering   → the plain `SVV-Authorization:
-//     Apikey <uuid>` service individuals can actually get, 50 000 calls/day.
+// akfell-datautlevering.atlas.vegvesen.no is the one Vegvesen documents for
+// the open Enkeltoppslag service, and it takes `SVV-Authorization: Apikey
+// <uuid>`. An unauthenticated request there answers 401 with a
+// `www-authenticate: Bearer` header advertising OAuth and certificate-bound
+// tokens, which makes it look like it demands a virksomhetssertifikat. It does
+// not — that header is about a different access path on the same gateway, and
+// a plain API key works. Per the docs a bad key gives 403, not 401, and an
+// exhausted quota gives 429.
 //
-// This uses the second. The field mapping below comes from a working
-// integration rather than from the docs, which are vague about the response.
+// www.vegvesen.no/ws/.../datautlevering is an older path for the same service,
+// kept here as a fallback because it is known to work.
 //
 // Deliberately NOT used: the "kjoretoyopplysninger-med-eierinformasjon"
 // variant. It returns the registered owner's personal data, needs separate
 // approval, and tells us nothing about what a car is worth — there is no
 // reason to hold that data to haggle over a Golf.
+//
+// Note for anyone extending this: Vegvesen states that a kjennemerke and an
+// understellsnummer are themselves personal data under personopplysningsloven.
+// A private person watching the market for their own next car is ordinary
+// personal use; publishing or sharing a database of them would not be.
 
-const BASE = "https://www.vegvesen.no"
-const SINGLE_LOOKUP = "/ws/no/vegvesen/kjoretoy/felles/datautlevering/enkeltoppslag/kjoretoydata"
+const ENDPOINTS = [
+  "https://akfell-datautlevering.atlas.vegvesen.no/enkeltoppslag/kjoretoydata",
+  "https://www.vegvesen.no/ws/no/vegvesen/kjoretoy/felles/datautlevering/enkeltoppslag/kjoretoydata",
+] as const
 const CONFIG = () => join(stateDir, "vegvesen.json")
 
 export type VegvesenAuth =
@@ -70,25 +80,45 @@ export async function lookup(params: { regno?: string; vin?: string }, signal?: 
   const auth = loadAuth()
   if (!auth) return undefined
   if (!params.regno && !params.vin) throw new VegvesenError("provider", "A plate or VIN is required.")
-
-  const url = new URL(BASE + SINGLE_LOOKUP)
-  if (params.regno) url.searchParams.set("kjennemerke", params.regno.replace(/\s+/g, "").toUpperCase())
-  else url.searchParams.set("understellsnummer", params.vin!)
+  // The API rejects a request carrying both fields with a 400.
+  const query = params.regno
+    ? `kjennemerke=${encodeURIComponent(params.regno.replace(/\s+/g, "").toUpperCase())}`
+    : `understellsnummer=${encodeURIComponent(params.vin!)}`
 
   const headers: Record<string, string> = { accept: "application/json" }
   if (auth.kind === "apikey") headers["SVV-Authorization"] = `Apikey ${auth.key}`
   else headers["authorization"] = `Bearer ${auth.token}`
 
-  const response = await fetch(url, { headers, signal }).catch((error: unknown) => {
-    throw new VegvesenError("network", `Could not reach Vegvesen: ${error instanceof Error ? error.message : String(error)}`)
-  })
+  let lastError: VegvesenError | undefined
+  for (const endpoint of ENDPOINTS) {
+    const response = await fetch(`${endpoint}?${query}`, { headers, signal }).catch((error: unknown) => {
+      if (error instanceof Error && error.name === "AbortError") throw error
+      return undefined
+    })
+    if (!response) {
+      lastError = new VegvesenError("network", `Could not reach ${new URL(endpoint).hostname}.`)
+      continue
+    }
 
-  if (response.status === 401 || response.status === 403)
-    throw new VegvesenError("unauthenticated", "Vegvesen rejected the credential. Run `bazaar provider vegvesen setup` with a current API key.")
-  if (response.status === 404) throw new VegvesenError("not_found", `No vehicle found for ${params.regno ?? params.vin}.`)
-  if (!response.ok) throw new VegvesenError("provider", `Vegvesen returned ${response.status} ${response.statusText}.`)
+    if (response.ok) return response.json()
 
-  return response.json()
+    // A rejected key and an exhausted quota are the caller's problem to hear
+    // about, not something to retry against the other host.
+    if (response.status === 403)
+      throw new VegvesenError("unauthenticated", "Vegvesen rejected the API key (403) — it may be inactive, or the user blocked.")
+    if (response.status === 429) throw new VegvesenError("provider", "Vegvesen quota exhausted for this key (429). The limit is 50 000 calls per day.")
+    if (response.status === 400)
+      throw new VegvesenError("provider", "Vegvesen rejected the request (400) — supply exactly one of plate or VIN.")
+    if (response.status === 404) throw new VegvesenError("not_found", `No vehicle found for ${params.regno ?? params.vin}.`)
+
+    // 401 and 5xx: try the other host before giving up.
+    lastError = new VegvesenError(
+      response.status === 401 ? "unauthenticated" : "provider",
+      `${new URL(endpoint).hostname} returned ${response.status} ${response.statusText}.`,
+    )
+  }
+
+  throw lastError ?? new VegvesenError("provider", "Vegvesen lookup failed.")
 }
 
 // ---------------------------------------------------------------------------

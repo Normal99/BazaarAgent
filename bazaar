@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run the agent from anywhere without installing it:
+#   ./bazaar provider status
+# Or put it on your PATH:
+#   ln -s "$PWD/bazaar" ~/.local/bin/bazaar
+exec bun run "$(dirname "$(readlink -f "$0")")/packages/agent/src/cli.ts" "$@"

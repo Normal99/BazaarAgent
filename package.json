@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "check": "bunx tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "bazaar": "bun run packages/agent/src/cli.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
