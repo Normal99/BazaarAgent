@@ -4,6 +4,8 @@ import { parseItemPage } from "./finn/item.ts"
 import { valueListing, isFailure, type Valuation } from "./value/comps.ts"
 import { scoreListing, looksLikePartsCar, odometerDiscrepancy, stripUnreliableOdometerClaims } from "./value/score.ts"
 import { matchAll, summarise, type Requirement, type RequirementMatch } from "./value/requirements.ts"
+import { travelCost, distancePenalty } from "./value/distance.ts"
+import { loadHome } from "./home.ts"
 import { buildHagglePlan, type HagglePlan, type Lever } from "./value/haggle.ts"
 import { analyzeListing, type Analysis } from "./llm/analyze.ts"
 import { providersFor } from "./llm/brain.ts"
@@ -49,6 +51,7 @@ export interface ScoredListing {
 export function valueAll(options: PipelineOptions): { valued: number; skipped: number; results: ScoredListing[] } {
   const { store } = options
   const results: ScoredListing[] = []
+  const home = loadHome()
   let skipped = 0
 
   for (const listing of store.valuationCandidates()) {
@@ -81,6 +84,7 @@ export function valueAll(options: PipelineOptions): { valued: number; skipped: n
       dealerSegment: listing.dealer_segment,
       publishedAt: listing.published_at,
       priceDrops: Math.max(0, history.length - 1),
+      distance: distanceFor(home, listing),
     })
 
     store.saveValuation(listing.ad_id, {
@@ -290,6 +294,7 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
       fairValue: candidate.valuation.fairValue,
       registryFindings: registryFindings.length,
       requirementDelta: summarise(matches).scoreDelta,
+      distance: distanceFor(loadHome(), listing),
     })
     store.saveValuation(listing.ad_id, {
       fairValue: candidate.valuation.fairValue,
@@ -311,4 +316,10 @@ export function euControlFor(specs: { eu_control_due: string | null } | null, fi
   if (specs?.eu_control_due) return { text: specs.eu_control_due, verified: true }
   const inferred = inferEuControl(firstRegistered)
   return inferred ? { text: `~${inferred.dueYear} (beregnet)`, verified: false } : { text: "ukjent", verified: false }
+}
+
+/** Distance scoring for one listing, or undefined when no home is set or the ad has no coordinates. */
+function distanceFor(home: ReturnType<typeof loadHome>, listing: ListingRow): { delta: number; label: string } | undefined {
+  if (!home || listing.lat == null || listing.lon == null) return undefined
+  return distancePenalty(travelCost(home, { lat: listing.lat, lon: listing.lon }).roadKm)
 }

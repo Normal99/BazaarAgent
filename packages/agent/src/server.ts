@@ -6,6 +6,8 @@ import { normalizeSearchUrl } from "./finn/search.ts"
 import { parseSearchRequirements } from "./store.ts"
 import { parseRequirements, summarise, type RequirementMatch } from "./value/requirements.ts"
 import { euControlFor } from "./pipeline.ts"
+import { travelCost } from "./value/distance.ts"
+import { loadHome } from "./home.ts"
 import { stripUnreliableOdometerClaims } from "./value/score.ts"
 
 // A small JSON API plus the static PWA. One server, reached from a phone over
@@ -67,9 +69,11 @@ function deals(store: Store, url: URL) {
   const min = Number(url.searchParams.get("min") ?? 0)
   const limit = Number(url.searchParams.get("limit") ?? 50)
   const budget = store.listSearches().find((s) => s.budget_nok)?.budget_nok ?? undefined
+  const home = loadHome()
 
   return {
     budget,
+    home: home ? { label: home.label } : null,
     deals: store.topDeals(limit, min).map((row) => {
       const model = row.model_json ? JSON.parse(row.model_json) : {}
       const levers: Array<{ estValueNok: number }> = row.levers_json ? JSON.parse(row.levers_json) : []
@@ -102,6 +106,13 @@ function deals(store: Store, url: URL) {
         leverTotal,
         haggleable,
         overBudgetBy: budget !== undefined && row.price > budget ? row.price - budget : null,
+        trip:
+          home && listing?.lat != null && listing?.lon != null
+            ? (() => {
+                const t = travelCost(home, { lat: listing.lat!, lon: listing.lon! })
+                return { roadKm: Math.round(t.roadKm), costNok: Math.round(t.costNok), hours: t.hours }
+              })()
+            : null,
         thumb: images[0] ?? null,
       }
     }),
@@ -186,6 +197,12 @@ function dealDetail(store: Store, adId: number): Response {
       vin: listing.vin,
       images: listing.image_urls ? JSON.parse(listing.image_urls) : [],
       publishedAt: listing.published_at,
+      trip: (() => {
+        const home = loadHome()
+        if (!home || listing.lat == null || listing.lon == null) return null
+        const t = travelCost(home, { lat: listing.lat, lon: listing.lon })
+        return { roadKm: Math.round(t.roadKm), costNok: Math.round(t.costNok), hours: t.hours, note: t.note, from: home.label }
+      })(),
     },
     valuation: row
       ? {

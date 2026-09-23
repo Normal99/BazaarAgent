@@ -10,6 +10,12 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/BazaarAgent
 ExecStart=%h/BazaarAgent/bazaar sweep
+# Retire cars that have sold. Skipping this lets the comparables corpus drift
+# upward, since what lingers is disproportionately what did not sell.
+ExecStartPost=%h/BazaarAgent/bazaar reap --stale=36 --max=25
+# Deepen comparables for one model group per run. 45% of valuations were still
+# low-confidence when this only ran by hand.
+ExecStartPost=%h/BazaarAgent/bazaar corpus --pages=3 --models=1
 ExecStartPost=%h/BazaarAgent/bazaar score --max=8
 ExecStartPost=%h/BazaarAgent/bazaar notify
 

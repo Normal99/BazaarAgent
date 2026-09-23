@@ -15,6 +15,9 @@ import { saveNtfyConfig, send, dealNotification } from "./notify/ntfy.ts"
 import { buildCorpus } from "./corpus.ts"
 import { parseRequirements, formatRequirements, summarise } from "./value/requirements.ts"
 import { startServer } from "./server.ts"
+import { reap } from "./reap.ts"
+import { loadHome, saveHome, resolveHome } from "./home.ts"
+import { travelCost } from "./value/distance.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
 
@@ -230,6 +233,28 @@ function serve(args: string[]): void {
   console.log("From your phone: use this machine\u2019s Tailscale name, e.g. http://tfpc:" + port)
 }
 
+async function homeCmd(args: string[]): Promise<void> {
+  const input = args.join(" ").trim()
+  if (!input) {
+    const home = loadHome()
+    console.log(home ? `Hjemme: ${home.label}  (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)})` : 'No home set — distance is not scored.\n  ./bazaar home "Skien"     or     ./bazaar home 59.2,9.6')
+    return
+  }
+  const home = await resolveHome(input)
+  saveHome(home)
+  console.log(`✓ Hjemme: ${home.label}  (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)})`)
+  console.log("  Distance now counts in the score. Re-run `./bazaar score` to apply it.")
+}
+
+async function reapCmd(args: string[]): Promise<void> {
+  const hours = Number(args.find((a) => a.startsWith("--stale="))?.split("=")[1] ?? 24)
+  const max = Number(args.find((a) => a.startsWith("--max="))?.split("=")[1] ?? 40)
+  const store = new Store()
+  const result = await reap({ store, staleAfterHours: hours, max, onProgress: (l) => console.log(l) })
+  console.log(`\nChecked ${result.checked}: ${result.delisted} gone, ${result.stillLive} still listed.`)
+  store.close()
+}
+
 async function corpus(args: string[]): Promise<void> {
   const pages = Number(args.find((a) => a.startsWith("--pages="))?.split("=")[1] ?? 3)
   const models = Number(args.find((a) => a.startsWith("--models="))?.split("=")[1] ?? 8)
@@ -266,7 +291,10 @@ function printDeal(deal: ScoredListing): void {
   const under = valuation.residualPct > 0 ? `${(valuation.residualPct * 100).toFixed(0)}% under` : `${(-valuation.residualPct * 100).toFixed(0)}% over`
   console.log(`\n  [${score.toFixed(1)}] ${listing.heading} ${listing.year} · ${listing.mileage.toLocaleString("nb-NO")} km`)
   console.log(`        ${kr(listing.price)} · ${under} marked (est. ${kr(valuation.fairValue)}, ${valuation.selection.comps.length} comps, ${valuation.confidence})`)
-  console.log(`        ${listing.dealer_segment ?? "?"} · ${listing.location ?? "?"} · ${listing.url}`)
+  const home = loadHome()
+  const trip = home && listing.lat != null && listing.lon != null ? travelCost(home, { lat: listing.lat, lon: listing.lon }) : undefined
+  console.log(`        ${listing.dealer_segment ?? "?"} · ${listing.location ?? "?"}${trip ? ` · ~${Math.round(trip.roadKm)} km (${kr(trip.costNok)} t/r, ${trip.hours.toFixed(1)} t)` : ""}`)
+  console.log(`        ${listing.url}`)
   if (plan?.haggleableIntoBudget) console.log(`        💬 ${kr(plan.overBudgetBy!)} over budsjett — forhandlebart ned til ${kr(plan.target)}`)
   else if (plan && plan.target < listing.price) console.log(`        💬 mål ${kr(plan.target)} · gå fra ved ${kr(plan.walkAway)}`)
   for (const finding of deal.registryFindings) console.log(`        ⚠ ${finding}`)
@@ -358,10 +386,11 @@ async function notifyCmd(args: string[]): Promise<void> {
   const minScore = Math.min(...searches.map((s) => s.min_score), 6)
   const budget = searches.find((s) => s.budget_nok)?.budget_nok ?? undefined
   let sent = 0
+  let failed = 0
   for (const row of store.topDeals(30, minScore)) {
     const listing = store.listing(row.ad_id)
     if (!listing) continue
-    if (!store.markNotified(row.ad_id, "deal")) continue // already told them
+    if (store.wasNotified(row.ad_id, "deal")) continue // already told them
     const ok = await send(
       dealNotification(
         {
@@ -374,9 +403,18 @@ async function notifyCmd(args: string[]): Promise<void> {
         budget ?? undefined,
       ),
     )
-    if (ok) sent++
+    // Record it ONLY once it actually went out. Marking first burns the deal
+    // permanently when the send fails — which is exactly what happened while
+    // ntfy was unconfigured: 46 cars marked sent, none delivered, and none
+    // that would ever be retried.
+    if (ok) {
+      store.markNotified(row.ad_id, "deal")
+      sent++
+    } else {
+      failed++
+    }
   }
-  console.log(`${sent} notification${sent === 1 ? "" : "s"} sent.`)
+  console.log(`${sent} notification${sent === 1 ? "" : "s"} sent.${failed ? ` ${failed} failed and will be retried — is ntfy configured?` : ""}`)
   store.close()
 }
 
@@ -411,6 +449,8 @@ const USAGE = `bazaar — finn.no deal hunter
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
   serve [--port=N] [--host=H]          web UI for phone and desktop
+  home ["Skien" | lat,lon]             set where you are, so distance counts
+  reap [--stale=H] [--max=N]           verify stale listings; retire the sold ones
   corpus [--pages=N] [--models=N]      deepen comparables for watched models
   score [--no-llm] [--max=N]           value, enrich and rank everything swept
   deals [--min=N]                      show the ranked feed
@@ -432,6 +472,8 @@ try {
     case "vision-probe": await visionProbe(rest); break
     case "vv": await vv(rest); break
     case "serve": serve(rest); break
+    case "home": await homeCmd(rest); break
+    case "reap": await reapCmd(rest); break
     case "corpus": await corpus(rest); break
     case "score": await score(rest); break
     case "deals": await deals(rest); break

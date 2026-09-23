@@ -221,3 +221,26 @@ describe("requirements are scoped to the search that found the car", () => {
     expect(store.requirementsFor(555)).toEqual([{ text: "ryggekamera", required: true }])
   })
 })
+
+describe("notifications are only recorded once delivered", () => {
+  test("wasNotified is a read that does not itself mark anything", () => {
+    // The bug this guards: markNotified() was called BEFORE send(), so a
+    // failed delivery burned the deal permanently. 46 cars were marked sent
+    // while ntfy was unconfigured and would never have been retried.
+    expect(store.wasNotified(1, "deal")).toBe(false)
+    expect(store.wasNotified(1, "deal")).toBe(false) // still false — no side effect
+    expect(store.db.query("SELECT COUNT(*) n FROM notified").get()).toMatchObject({ n: 0 })
+  })
+
+  test("marking is idempotent and only the first call claims it", () => {
+    expect(store.markNotified(1, "deal")).toBe(true)
+    expect(store.markNotified(1, "deal")).toBe(false)
+    expect(store.wasNotified(1, "deal")).toBe(true)
+  })
+
+  test("reasons are tracked separately, so a price drop can still alert", () => {
+    store.markNotified(1, "deal")
+    expect(store.wasNotified(1, "price-drop")).toBe(false)
+    expect(store.markNotified(1, "price-drop")).toBe(true)
+  })
+})

@@ -104,7 +104,7 @@ function card(d) {
       <div class="card-body">
         <span class="score ${d.score >= 8 ? "hot" : ""}">${(d.score ?? 0).toFixed(1)}</span>
         <h3>${esc(d.heading)}</h3>
-        <div class="meta">${d.year ?? "—"} · ${km(d.mileage)} · ${esc(d.dealerSegment ?? "")} · ${esc(d.location ?? "")}</div>
+        <div class="meta">${d.year ?? "—"} · ${km(d.mileage)} · ${esc(d.dealerSegment ?? "")} · ${esc(d.location ?? "")}${d.trip ? ` · ~${d.trip.roadKm} km` : ""}</div>
         <div class="price">${kr(d.price)}</div>
         ${badges.join("")}
       </div>
@@ -138,8 +138,11 @@ async function viewDeal(adId) {
         <dt>Kilometerstand</dt><dd>${km(d.listing.mileage)}</dd>
         <dt>Selger</dt><dd>${esc(d.listing.dealerSegment ?? "—")}</dd>
         <dt>Sted</dt><dd>${esc(d.listing.location ?? "—")}</dd>
+        ${d.listing.trip ? `<dt>Avstand</dt><dd>~${d.listing.trip.roadKm} km</dd>
+        <dt>Reise tur/retur</dt><dd>${kr(d.listing.trip.costNok)} · ${d.listing.trip.hours.toFixed(1)} t</dd>` : ""}
         ${d.specs?.euControl ? `<dt>EU-kontroll</dt><dd>${esc(d.specs.euControl.text)}${d.specs.euControl.verified ? "" : " *"}</dd>` : ""}
       </dl>
+      ${d.listing.trip ? `<p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Fra ${esc(d.listing.trip.from)}. ${esc(d.listing.trip.note)}</p>` : ""}
       ${d.specs?.euControl && !d.specs.euControl.verified ? '<p class="meta" style="color:var(--text-muted);font-size:12px;margin:8px 0 0">* beregnet fra første registrering, ikke bekreftet mot registeret</p>' : ""}
       <a class="copy" style="display:block;text-align:center;text-decoration:none" href="${esc(d.listing.url)}" target="_blank" rel="noopener">Åpne på FINN</a>
     </div>

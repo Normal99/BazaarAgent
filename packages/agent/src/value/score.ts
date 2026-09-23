@@ -27,6 +27,8 @@ export interface ScoreInput {
   readonly registryFindings?: number
   /** From summarise(): heavily negative for a missing must-have, mildly positive for extras. */
   readonly requirementDelta?: number
+  /** From distancePenalty(). Undefined when no home is configured. */
+  readonly distance?: { delta: number; label: string }
   readonly now?: number
 }
 
@@ -214,6 +216,13 @@ export function scoreListing(input: ScoreInput): ScoreBreakdown {
   if (input.requirementDelta) {
     parts.push({ label: input.requirementDelta < 0 ? "mangler ønsket utstyr" : "har ønsket utstyr", delta: input.requirementDelta })
     score += input.requirementDelta
+  }
+
+  // Distance is part of the cost, not a tiebreaker. A 900 km car has to be
+  // meaningfully better than an equivalent one nearby to be worth the trip.
+  if (input.distance && input.distance.delta !== 0) {
+    parts.push({ label: input.distance.label, delta: input.distance.delta })
+    score += input.distance.delta
   }
 
   // The registry contradicting the ad is the single worst signal available,

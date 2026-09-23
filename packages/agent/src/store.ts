@@ -200,6 +200,8 @@ export interface ListingRow {
   readonly transmission: string | null
   readonly dealer_segment: string | null
   readonly location: string | null
+  readonly lat: number | null
+  readonly lon: number | null
   readonly published_at: number | null
   readonly image_urls: string | null
   readonly regno: string | null
@@ -600,7 +602,7 @@ export class Store {
     return this.db
       .query<ListingRow, [number]>(
         `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
-                dealer_segment, location, published_at, image_urls, regno, vin
+                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin
          FROM listings
          WHERE delisted_at IS NULL AND year IS NOT NULL AND mileage IS NOT NULL AND price > 0
          ORDER BY first_seen DESC LIMIT ?`,
@@ -612,7 +614,7 @@ export class Store {
     return this.db
       .query<ListingRow, [number]>(
         `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
-                dealer_segment, location, published_at, image_urls, regno, vin
+                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin
          FROM listings WHERE ad_id = ?`,
       )
       .get(adId)
@@ -638,6 +640,11 @@ export class Store {
          ORDER BY v.score DESC LIMIT ?`,
       )
       .all(minScore, limit)
+  }
+
+  /** Whether this was already delivered. Separate from recording a delivery. */
+  wasNotified(adId: number, reason: string): boolean {
+    return this.db.query("SELECT 1 FROM notified WHERE ad_id = ? AND reason = ?").get(adId, reason) !== null
   }
 
   markNotified(adId: number, reason: string): boolean {
