@@ -156,6 +156,7 @@ ul.findings .ev { color: var(--text-muted); font-size: 13px; display: block; mar
 ul.findings a { color: var(--series-1); font-size: 13px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .dot.red { background: var(--bad); } .dot.green { background: var(--good); }
+.dot.maybe { background: var(--text-muted); }
 
 .rationale { margin: 0; padding: 0; list-style: none; font-size: 14px; color: var(--text-secondary); }
 .rationale li { padding: 3px 0; }

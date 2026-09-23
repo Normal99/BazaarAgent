@@ -41,12 +41,30 @@ export const LeverSchema = z.object({
   estValueNok: z.number().min(0).max(500_000),
 })
 
+/**
+ * Whether the car has something the buyer asked for.
+ *
+ * "kanskje" is a first-class answer and the prompt insists on it. An equipment
+ * list that does not mention a towbar is not evidence there isn't one — plenty
+ * of sellers list nothing at all — and a confident "nei" on silence would throw
+ * away good cars.
+ */
+export const RequirementCheckSchema = z.object({
+  requirement: z.string(),
+  status: z.enum(["ja", "nei", "kanskje"]),
+  evidence: z.string().nullish(),
+  source: z.enum(["utstyr", "spesifikasjon", "tekst", "bilde", "ukjent"]).nullish(),
+  imageIndex: z.number().int().min(0).nullish(),
+})
+
 export const AnalysisSchema = z.object({
   redFlags: z.array(FlagSchema).max(15),
   greenFlags: z.array(FlagSchema).max(15),
   levers: z.array(LeverSchema).max(10),
   /** Odometer read off a dashboard photo, when one is legible. */
   odometerSeenKm: z.number().int().min(0).max(2_000_000).nullish(),
+  /** One entry per requirement asked about, in the same order. */
+  requirements: z.array(RequirementCheckSchema).max(20).nullish(),
   summaryNo: z.string().max(1200),
 })
 
@@ -72,6 +90,13 @@ Regler:
   lekkasjer eller korrosjon i motorrommet.
 - Hvis et dashbordbilde viser kilometerstand: les den av og sett odometerSeenKm.
   Ellers null.
+- Får du en liste med ØNSKER: svar på hver enkelt, i samme rekkefølge.
+  · "ja" bare når du ser det i utstyrslisten, i tekniske data, i annonseteksten
+    eller tydelig på et bilde. Oppgi hvor du så det i evidence.
+  · "nei" bare når du har positivt grunnlag for at bilen mangler det.
+  · "kanskje" ellers. At noe ikke står i utstyrslisten betyr IKKE at bilen
+    mangler det — mange selgere fyller ikke ut listen i det hele tatt.
+    Her er "kanskje" riktig svar, ikke "nei".
 
 JSON-format:
 {
@@ -79,6 +104,7 @@ JSON-format:
   "greenFlags": [{"claim": "...", "source": "tekst"|"bilde", "evidence": "..."}],
   "levers":     [{"claim": "...", "evidence": "...", "estValueNok": 8000}],
   "odometerSeenKm": null,
+  "requirements": [{"requirement": "skinnseter", "status": "ja"|"nei"|"kanskje", "evidence": "...", "source": "utstyr"|"spesifikasjon"|"tekst"|"bilde"|"ukjent", "imageIndex": null}],
   "summaryNo": "..."
 }`
 
@@ -97,6 +123,8 @@ export interface AnalyzeInput {
   readonly imageUrls?: readonly string[]
   /** Registry findings, which carry more weight than anything the seller wrote. */
   readonly registryNotes?: readonly string[]
+  /** Only the ones text matching could not settle — no point asking twice. */
+  readonly openRequirements?: readonly { text: string; required: boolean }[]
 }
 
 function buildPrompt(input: AnalyzeInput, images: ImageRef[]): string {
@@ -120,6 +148,11 @@ function buildPrompt(input: AnalyzeInput, images: ImageRef[]): string {
   }
   if (input.equipment?.length) lines.push("", `Utstyr: ${input.equipment.slice(0, 40).join(", ")}`)
   if (input.description) lines.push("", "Annonsetekst:", input.description.slice(0, 6000))
+
+  if (input.openRequirements?.length) {
+    lines.push("", "ØNSKER som skal besvares (én oppføring hver, samme rekkefølge):")
+    for (const r of input.openRequirements) lines.push(`  - ${r.text}${r.required ? "  (MÅ ha)" : "  (ønskelig)"}`)
+  }
 
   lines.push(
     "",

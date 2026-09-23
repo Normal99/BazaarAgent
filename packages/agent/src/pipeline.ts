@@ -3,6 +3,7 @@ import { PoliteClient } from "./http.ts"
 import { parseItemPage } from "./finn/item.ts"
 import { valueListing, isFailure, type Valuation } from "./value/comps.ts"
 import { scoreListing, looksLikePartsCar, odometerDiscrepancy, stripUnreliableOdometerClaims } from "./value/score.ts"
+import { matchAll, summarise, type Requirement, type RequirementMatch } from "./value/requirements.ts"
 import { buildHagglePlan, type HagglePlan, type Lever } from "./value/haggle.ts"
 import { analyzeListing, type Analysis } from "./llm/analyze.ts"
 import { providersFor } from "./llm/brain.ts"
@@ -28,6 +29,8 @@ export interface PipelineOptions {
   /** Cap on LLM calls per run, so one sweep cannot run away with the budget. */
   readonly maxAnalyses?: number
   readonly budget?: number
+  /** Defaults to the union across active searches. */
+  readonly requirements?: readonly Requirement[]
   readonly onProgress?: (line: string) => void
 }
 
@@ -39,6 +42,7 @@ export interface ScoredListing {
   readonly analysis?: Analysis
   readonly plan?: HagglePlan
   readonly registryFindings: string[]
+  readonly requirements?: RequirementMatch[]
 }
 
 /** Value every live listing. Free, so it runs over everything. */
@@ -174,6 +178,17 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
     const equipment: string[] = specs?.equipment_json ? JSON.parse(specs.equipment_json) : []
     const imageUrls: string[] = listing.image_urls ? JSON.parse(listing.image_urls) : []
 
+    // Settle what the text can settle before paying the model to look. finn's
+    // equipment list is the most reliable source available and it is free.
+    const requirements = options.requirements ?? store.requirementsFor(listing.ad_id)
+    let matches = matchAll(requirements, {
+      equipment,
+      modelSpecification: candidate.listing.model ? fields["Modell"] : undefined,
+      description: specs?.description,
+      fields,
+    })
+    const openRequirements = matches.filter((m) => m.status === "kanskje").map((m) => ({ text: m.requirement, required: m.required }))
+
     let analysis: Analysis | undefined
     let levers: Lever[] = []
 
@@ -199,11 +214,22 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
               specFields: fields,
               imageUrls,
               registryNotes: registryFindings,
+              openRequirements,
             },
             { primary, fallback, store: store },
           )
           analysis = result.analysis
           analysed++
+          // The model only saw the open ones, so its answers override
+          // "kanskje" and never a confirmed text match.
+          if (analysis.requirements?.length) {
+            const answered = new Map(analysis.requirements.map((r) => [r.requirement.toLowerCase(), r]))
+            matches = matches.map((m) => {
+              if (m.status !== "kanskje") return m
+              const a = answered.get(m.requirement.toLowerCase())
+              return a ? { ...m, status: a.status, evidence: a.evidence ?? undefined, source: (a.source ?? "ukjent") as RequirementMatch["source"] } : m
+            })
+          }
           levers = analysis.levers.map((l) => ({ claim: l.claim, evidence: l.evidence, estValueNok: l.estValueNok, source: "bilde" as const }))
           store.saveAnalysis(listing.ad_id, {
             flags: { red: analysis.redFlags, green: analysis.greenFlags },
@@ -214,6 +240,7 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
             imagesUsed: result.images.map((i) => i.url),
             summary: analysis.summaryNo,
             provider: result.provider,
+            requirements: matches,
           })
           log(`  ${listing.ad_id}: ${analysis.redFlags.length} røde flagg, ${analysis.levers.length} prutepunkt (${result.provider}${result.escalated ? ", eskalert" : ""})`)
         } catch (error) {
@@ -262,16 +289,17 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
       leverTotal: plan.leverTotal,
       fairValue: candidate.valuation.fairValue,
       registryFindings: registryFindings.length,
+      requirementDelta: summarise(matches).scoreDelta,
     })
     store.saveValuation(listing.ad_id, {
       fairValue: candidate.valuation.fairValue,
       residualPct: candidate.valuation.residualPct,
       compCount: candidate.valuation.selection.comps.length,
       score,
-      model: { tier: candidate.valuation.selection.tier, confidence: candidate.valuation.confidence, parts },
+      model: { tier: candidate.valuation.selection.tier, confidence: candidate.valuation.confidence, parts, requirements: matches },
     })
 
-    out.push({ ...candidate, score, parts, analysis, plan, registryFindings })
+    out.push({ ...candidate, score, parts, analysis, plan, registryFindings, requirements: matches })
   }
 
   out.sort((a, b) => b.score - a.score)

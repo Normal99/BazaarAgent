@@ -25,6 +25,8 @@ export interface ScoreInput {
   readonly fairValue?: number
   /** Registry disagreements with the ad — these weigh heavily. */
   readonly registryFindings?: number
+  /** From summarise(): heavily negative for a missing must-have, mildly positive for extras. */
+  readonly requirementDelta?: number
   readonly now?: number
 }
 
@@ -205,6 +207,13 @@ export function scoreListing(input: ScoreInput): ScoreBreakdown {
     const delta = -Math.min(2, share * 8)
     parts.push({ label: `funn verdt ${Math.round(input.leverTotal).toLocaleString("nb-NO")} kr`, delta })
     score += delta
+  }
+
+  // What the buyer asked for. A car missing a must-have is not a cheap version
+  // of the car they wanted — it is a different car, and no discount fixes that.
+  if (input.requirementDelta) {
+    parts.push({ label: input.requirementDelta < 0 ? "mangler ønsket utstyr" : "har ønsket utstyr", delta: input.requirementDelta })
+    score += input.requirementDelta
   }
 
   // The registry contradicting the ad is the single worst signal available,

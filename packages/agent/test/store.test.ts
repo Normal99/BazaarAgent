@@ -178,3 +178,46 @@ describe("comparables", () => {
     expect(comps.map((c) => c.ad_id)).toEqual([2])
   })
 })
+
+describe("requirements are scoped to the search that found the car", () => {
+  test("a wishlist on one search does not judge a car found by another", () => {
+    const tiguan = store.addSearch("Tiguan", "https://www.finn.no/mobility/search/car?a=1", 250000, 6, [
+      { text: "skinn", required: true },
+    ])
+    const cheap = store.addSearch("Billig", "https://www.finn.no/mobility/search/car?b=2", 120000, 6, [])
+
+    store.ingest([entry({ ad_id: 111 })], tiguan)
+    store.ingest([entry({ ad_id: 222 })], cheap)
+
+    expect(store.requirementsFor(111).map((r) => r.text)).toEqual(["skinn"])
+    expect(store.requirementsFor(222)).toEqual([])
+  })
+
+  test("a car found by both searches gets the union, must-have winning", () => {
+    const a = store.addSearch("A", "https://www.finn.no/mobility/search/car?a=1", undefined, 6, [{ text: "skinn", required: false }])
+    const b = store.addSearch("B", "https://www.finn.no/mobility/search/car?b=2", undefined, 6, [
+      { text: "skinn", required: true },
+      { text: "hengerfeste", required: false },
+    ])
+    store.ingest([entry({ ad_id: 333 })], a)
+    store.ingest([entry({ ad_id: 333 })], b)
+
+    const reqs = store.requirementsFor(333)
+    expect(reqs).toHaveLength(2)
+    expect(reqs.find((r) => r.text === "skinn")!.required).toBe(true)
+  })
+
+  test("a corpus sweep attaches no search, so it carries no wishlist", () => {
+    // Price discovery must not inherit a hunt's requirements.
+    store.ingest([entry({ ad_id: 444 })])
+    expect(store.requirementsFor(444)).toEqual([])
+  })
+
+  test("requirements survive a round trip through the database", () => {
+    const id = store.addSearch("R", "https://www.finn.no/mobility/search/car?r=1", undefined, 6, [
+      { text: "ryggekamera", required: true },
+    ])
+    store.ingest([entry({ ad_id: 555 })], id)
+    expect(store.requirementsFor(555)).toEqual([{ text: "ryggekamera", required: true }])
+  })
+})

@@ -5,6 +5,7 @@ import { databasePath } from "./paths.ts"
 import type { SearchEntry } from "./finn/types.ts"
 import type { ItemSpecs } from "./finn/item.ts"
 import type { CallRecord } from "llm-brain"
+import type { Requirement } from "./value/requirements.ts"
 
 // SQLite because the whole point is a local-first agent that survives a reboot
 // and can be inspected with a shell. WAL so a sweep writing does not block the
@@ -135,6 +136,16 @@ CREATE TABLE IF NOT EXISTS notified (
   PRIMARY KEY (ad_id, reason)
 );
 
+-- Which search turned up which listing. Requirements belong to a search, so a
+-- must-have on the Tiguan hunt must not quietly disqualify every car found by
+-- a different search. Corpus sweeps deliberately record nothing here: they are
+-- price discovery, not deal hunting, and carry no wishlist.
+CREATE TABLE IF NOT EXISTS listing_searches (
+  ad_id     INTEGER NOT NULL,
+  search_id INTEGER NOT NULL,
+  PRIMARY KEY (ad_id, search_id)
+);
+
 CREATE TABLE IF NOT EXISTS watchlist (
   ad_id    INTEGER PRIMARY KEY REFERENCES listings(ad_id),
   added_at INTEGER NOT NULL,
@@ -152,6 +163,27 @@ export interface CompRow {
   readonly dealer_segment: string | null
   readonly model: string | null
   readonly series: string | null
+}
+
+export interface SearchRow {
+  readonly id: number
+  readonly name: string
+  readonly url: string
+  readonly budget_nok: number | null
+  readonly min_score: number
+  readonly last_swept: number | null
+  readonly requirements_json: string | null
+}
+
+/** Requirements stored against a search, tolerating a row written before the column existed. */
+export function parseSearchRequirements(search: { requirements_json?: string | null }): Requirement[] {
+  if (!search.requirements_json) return []
+  try {
+    const parsed = JSON.parse(search.requirements_json)
+    return Array.isArray(parsed) ? parsed.filter((r) => r && typeof r.text === "string") : []
+  } catch {
+    return []
+  }
 }
 
 export interface ListingRow {
@@ -208,6 +240,28 @@ export class Store {
     this.db = new Database(path, { create: true })
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
     this.db.exec(SCHEMA)
+    this.migrate()
+  }
+
+  /**
+   * Add columns to a database that already exists.
+   *
+   * CREATE TABLE IF NOT EXISTS does nothing to a table that is already there,
+   * so new columns need adding explicitly. Checking pragma table_info first
+   * keeps this idempotent without needing a version counter.
+   */
+  private migrate(): void {
+    const columns = (table: string) =>
+      new Set((this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name))
+
+    const add = (table: string, column: string, definition: string) => {
+      if (!columns(table).has(column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
+
+    add("searches", "requirements_json", "TEXT")
+    this.db.exec(`CREATE TABLE IF NOT EXISTS listing_searches (
+      ad_id INTEGER NOT NULL, search_id INTEGER NOT NULL, PRIMARY KEY (ad_id, search_id))`)
+    add("analyses", "requirements_json", "TEXT")
   }
 
   close(): void {
@@ -218,23 +272,53 @@ export class Store {
   // Searches
   // -------------------------------------------------------------------------
 
-  addSearch(name: string, url: string, budget?: number, minScore = 6): number {
+  addSearch(name: string, url: string, budget?: number, minScore = 6, requirements?: readonly Requirement[]): number {
     const row = this.db
-      .query<{ id: number }, [string, string, number | null, number, number]>(
-        `INSERT INTO searches (name, url, budget_nok, min_score, created_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(url) DO UPDATE SET name = excluded.name, budget_nok = excluded.budget_nok, min_score = excluded.min_score
+      .query<{ id: number }, [string, string, number | null, number, string | null, number]>(
+        `INSERT INTO searches (name, url, budget_nok, min_score, requirements_json, created_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(url) DO UPDATE SET name = excluded.name, budget_nok = excluded.budget_nok,
+           min_score = excluded.min_score, requirements_json = excluded.requirements_json
          RETURNING id`,
       )
-      .get(name, url, budget ?? null, minScore, Date.now())
+      .get(name, url, budget ?? null, minScore, requirements?.length ? JSON.stringify(requirements) : null, Date.now())
     return row!.id
   }
 
-  listSearches(activeOnly = true): Array<{ id: number; name: string; url: string; budget_nok: number | null; min_score: number; last_swept: number | null }> {
+  listSearches(activeOnly = true): SearchRow[] {
     return this.db
-      .query<{ id: number; name: string; url: string; budget_nok: number | null; min_score: number; last_swept: number | null }, []>(
-        `SELECT id, name, url, budget_nok, min_score, last_swept FROM searches ${activeOnly ? "WHERE active = 1" : ""} ORDER BY id`,
+      .query<SearchRow, []>(
+        `SELECT id, name, url, budget_nok, min_score, last_swept, requirements_json
+         FROM searches ${activeOnly ? "WHERE active = 1" : ""} ORDER BY id`,
       )
       .all()
+  }
+
+  /**
+   * The requirements that apply to one listing.
+   *
+   * Only the searches that actually turned this car up, so a wishlist written
+   * for one hunt never judges a car found by another. A car matched by two
+   * searches gets the union, and a must-have in either wins — if you need a
+   * towbar on one hunt, a car without one still is not what you asked for.
+   */
+  requirementsFor(adId: number): Requirement[] {
+    const rows = this.db
+      .query<SearchRow, [number]>(
+        `SELECT s.id, s.name, s.url, s.budget_nok, s.min_score, s.last_swept, s.requirements_json
+         FROM searches s JOIN listing_searches ls ON ls.search_id = s.id
+         WHERE ls.ad_id = ? AND s.active = 1`,
+      )
+      .all(adId)
+
+    const seen = new Map<string, Requirement>()
+    for (const row of rows) {
+      for (const requirement of parseSearchRequirements(row)) {
+        const key = requirement.text.toLowerCase()
+        const existing = seen.get(key)
+        if (!existing || (requirement.required && !existing.required)) seen.set(key, requirement)
+      }
+    }
+    return [...seen.values()]
   }
 
   markSwept(searchId: number): void {
@@ -252,7 +336,7 @@ export class Store {
    * of cars and no history. Here, a car that came back cheaper under a new ad
    * id, or quietly dropped 15 000 kr last Tuesday, is a fact on record.
    */
-  ingest(entries: readonly SearchEntry[]): Change[] {
+  ingest(entries: readonly SearchEntry[], searchId?: number): Change[] {
     const now = Date.now()
     const changes: Change[] = []
 
@@ -279,6 +363,7 @@ export class Store {
          heading = excluded.heading, raw_json = excluded.raw_json, delisted_at = NULL`,
     )
     const addPrice = this.db.query("INSERT INTO price_history (ad_id, observed_at, price) VALUES (?, ?, ?)")
+    const link = this.db.query("INSERT OR IGNORE INTO listing_searches (ad_id, search_id) VALUES (?, ?)")
 
     const transaction = this.db.transaction((rows: readonly SearchEntry[]) => {
       for (const entry of rows) {
@@ -337,6 +422,7 @@ export class Store {
           $raw_json: JSON.stringify(entry),
         })
         if (priceIsNews) addPrice.run(entry.ad_id, now, price)
+        if (searchId !== undefined) link.run(entry.ad_id, searchId)
       }
     })
 
@@ -482,14 +568,15 @@ export class Store {
       .run(adId, Date.now(), Math.round(v.fairValue), v.residualPct, v.compCount, v.score, JSON.stringify(v.model))
   }
 
-  saveAnalysis(adId: number, a: { flags: unknown; levers: unknown; odometerSeenKm?: number | null; imagesUsed: string[]; summary: string; provider: string }): void {
+  saveAnalysis(adId: number, a: { flags: unknown; levers: unknown; odometerSeenKm?: number | null; imagesUsed: string[]; summary: string; provider: string; requirements?: unknown }): void {
     this.db
       .query(
-        `INSERT INTO analyses (ad_id, flags_json, levers_json, odometer_seen_km, images_used_json, summary, provider, computed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO analyses (ad_id, flags_json, levers_json, odometer_seen_km, images_used_json, summary, provider, computed_at, requirements_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(ad_id) DO UPDATE SET flags_json=excluded.flags_json, levers_json=excluded.levers_json,
            odometer_seen_km=excluded.odometer_seen_km, images_used_json=excluded.images_used_json,
-           summary=excluded.summary, provider=excluded.provider, computed_at=excluded.computed_at`,
+           summary=excluded.summary, provider=excluded.provider, computed_at=excluded.computed_at,
+           requirements_json=excluded.requirements_json`,
       )
       .run(
         adId,
@@ -500,6 +587,7 @@ export class Store {
         a.summary,
         a.provider,
         Date.now(),
+        a.requirements ? JSON.stringify(a.requirements) : null,
       )
   }
 

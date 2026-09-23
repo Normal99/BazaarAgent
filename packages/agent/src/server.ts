@@ -3,6 +3,8 @@ import { Store } from "./store.ts"
 import { selectComps, fitPriceModel, type ValuationTarget } from "./value/comps.ts"
 import { buildHagglePlan } from "./value/haggle.ts"
 import { normalizeSearchUrl } from "./finn/search.ts"
+import { parseSearchRequirements } from "./store.ts"
+import { parseRequirements, summarise, type RequirementMatch } from "./value/requirements.ts"
 import { euControlFor } from "./pipeline.ts"
 import { stripUnreliableOdometerClaims } from "./value/score.ts"
 
@@ -39,7 +41,10 @@ export function startServer(options: ServerOptions = {}) {
       try {
         if (path === "/api/deals") return json(deals(store, url))
         if (path.startsWith("/api/deal/")) return dealDetail(store, Number(path.slice("/api/deal/".length)))
-        if (path === "/api/searches") return request.method === "POST" ? await addSearch(store, request) : json(store.listSearches(false))
+        if (path === "/api/searches")
+          return request.method === "POST"
+            ? await addSearch(store, request)
+            : json(store.listSearches(false).map((row) => ({ ...row, requirements: parseSearchRequirements(row) })))
         if (path === "/api/health") return json(health(store))
         if (path.startsWith("/api/watch/")) return toggleWatch(store, Number(path.slice("/api/watch/".length)))
 
@@ -90,6 +95,8 @@ function deals(store: Store, url: URL) {
         compCount: row.comp_count,
         score: row.score,
         confidence: model.confidence ?? null,
+        requirements: (model.requirements ?? []) as RequirementMatch[],
+        missingRequired: ((model.requirements ?? []) as RequirementMatch[]).filter((r) => r.required && r.status === "nei").length,
         disqualified: model.disqualified ?? null,
         summary: row.summary,
         leverTotal,
@@ -192,6 +199,7 @@ function dealDetail(store: Store, adId: number): Response {
           perYear: model.perYear,
           per10kKm: model.per10kKm,
           parts: model.parts ?? [],
+          requirements: model.requirements ?? [],
         }
       : null,
     // Each comp carries its own ad id so a point in the chart is clickable.
@@ -225,9 +233,9 @@ function dealDetail(store: Store, adId: number): Response {
 }
 
 async function addSearch(store: Store, request: Request): Promise<Response> {
-  const body = (await request.json()) as { name?: string; url?: string; budget?: number }
+  const body = (await request.json()) as { name?: string; url?: string; budget?: number; want?: string }
   if (!body.name || !body.url) return json({ error: "name and url are required" }, 400)
-  const id = store.addSearch(body.name, normalizeSearchUrl(body.url).toString(), body.budget)
+  const id = store.addSearch(body.name, normalizeSearchUrl(body.url).toString(), body.budget, 6, parseRequirements(body.want ?? ""))
   return json({ id })
 }
 

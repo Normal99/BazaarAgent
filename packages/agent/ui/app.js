@@ -89,6 +89,13 @@ function card(d) {
     )
   // The case the whole project exists for gets its own badge.
   if (d.haggleable) badges.push(`<span class="badge haggle">${kr(d.overBudgetBy)} over — forhandlebart</span>`)
+  // A car missing something you said you must have is not a deal at all, so it
+  // is called out before price, not after.
+  if (d.missingRequired > 0) badges.push(`<span class="badge over">mangler ${d.missingRequired} du må ha</span>`)
+  else if (d.requirements?.length) {
+    const met = d.requirements.filter((r) => r.status === "ja").length
+    if (met > 0) badges.push(`<span class="badge under">${met}/${d.requirements.length} ønsker ✓</span>`)
+  }
   if (d.confidence === "low") badges.push('<span class="badge low">usikkert anslag</span>')
 
   return `<button class="card" data-id="${d.adId}">
@@ -146,6 +153,18 @@ async function viewDeal(adId) {
         <dt>Sikkerhet</dt><dd>${esc(v.confidence ?? "—")}</dd>
       </dl>
       ${v.confidence === "low" ? '<p style="color:var(--warn);font-size:13px;margin:10px 0 0">Få eller ulike sammenligningsbiler — bruk tallet som pekepinn, ikke som argument.</p>' : ""}
+    </div>` : ""}
+
+    ${v?.requirements?.length ? `<div class="section">
+      <h2>Ønskene dine</h2>
+      <ul class="findings">
+        ${v.requirements.map((r) => {
+          const icon = r.status === "ja" ? '<span class="dot green"></span>' : r.status === "nei" ? '<span class="dot red"></span>' : '<span class="dot maybe"></span>'
+          const label = r.status === "ja" ? "" : r.status === "nei" ? " — ikke funnet" : " — ikke bekreftet, spør selger"
+          return `<li>${icon}<strong>${esc(r.requirement)}</strong>${r.required ? ' <span class="badge low">må ha</span>' : ""}${esc(label)}
+            ${r.evidence ? `<span class="ev">${esc(r.evidence)}${r.source ? ` (${esc(r.source)})` : ""}</span>` : ""}</li>`
+        }).join("")}
+      </ul>
     </div>` : ""}
 
     ${d.comps.length ? `<div class="section">
@@ -304,6 +323,7 @@ async function viewSearches() {
       <dl class="figures" style="margin-top:8px">
         <dt>Budsjett</dt><dd>${s.budget_nok ? kr(s.budget_nok) : "—"}</dd>
         <dt>Varselgrense</dt><dd>${s.min_score}</dd>
+        <dt>Ønsker</dt><dd>${s.requirements?.length ? s.requirements.map((r) => esc(r.text) + (r.required ? "!" : "")).join(", ") : "—"}</dd>
         <dt>Sist sjekket</dt><dd>${s.last_swept ? new Date(s.last_swept).toLocaleString("nb-NO") : "aldri"}</dd>
       </dl>
     </div>`).join("")}
@@ -313,6 +333,8 @@ async function viewSearches() {
         <input name="name" placeholder="Navn, f.eks. «Golf under 150k»" required>
         <input name="url" placeholder="Lim inn URL-en fra et lagret søk på finn.no" required>
         <input name="budget" type="number" placeholder="Budsjett i kroner (valgfritt)">
+        <input name="want" placeholder="Ønsker: skinn!, hengerfeste, ryggekamera">
+        <p style="margin:0;font-size:12px;color:var(--text-muted)">Skill med komma. Sett <strong>!</strong> etter noe du må ha — biler uten det rangeres ned.</p>
         <button>Legg til</button>
       </form>
     </div>`
@@ -323,7 +345,7 @@ async function viewSearches() {
     const res = await fetch("/api/searches", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: f.get("name"), url: f.get("url"), budget: f.get("budget") ? Number(f.get("budget")) : undefined }),
+      body: JSON.stringify({ name: f.get("name"), url: f.get("url"), budget: f.get("budget") ? Number(f.get("budget")) : undefined, want: f.get("want") || undefined }),
     }).then((r) => r.json())
     if (res.error) alert(res.error)
     else route()

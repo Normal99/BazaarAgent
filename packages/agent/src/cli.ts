@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { configureHugin, huginStatus, configureOpenRouter, openRouterStatus } from "llm-brain"
 import { initBrain, loadBrainConfig, saveBrainConfig, providersFor, huginConfigured, openRouterConfigured } from "./llm/brain.ts"
-import { Store } from "./store.ts"
+import { Store, parseSearchRequirements } from "./store.ts"
 import { PoliteClient } from "./http.ts"
 import { sweepSearch, normalizeSearchUrl } from "./finn/search.ts"
 import { parseItemPage } from "./finn/item.ts"
@@ -13,6 +13,7 @@ import { valueAll, enrichTop, type ScoredListing } from "./pipeline.ts"
 import { buildHagglePlan } from "./value/haggle.ts"
 import { saveNtfyConfig, send, dealNotification } from "./notify/ntfy.ts"
 import { buildCorpus } from "./corpus.ts"
+import { parseRequirements, formatRequirements, summarise } from "./value/requirements.ts"
 import { startServer } from "./server.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
@@ -172,7 +173,7 @@ async function sweep(args: string[]): Promise<void> {
       console.log("  --dry-run: nothing written")
       continue
     }
-    const changes = store.ingest(entries)
+    const changes = store.ingest(entries, search.id)
     store.markSwept(search.id)
     const counts = { new: 0, price: 0, relisted: 0 } as Record<string, number>
     for (const change of changes) counts[change.kind]!++
@@ -191,13 +192,20 @@ async function searchCmd(args: string[]): Promise<void> {
   const [action, ...rest] = args
   const store = new Store()
   if (action === "add") {
-    const [name, url, budget] = rest
-    if (!name || !url) throw new Error('Usage: bazaar search add "<name>" "<url>" [budget]')
-    store.addSearch(name, normalizeSearchUrl(url).toString(), budget ? Number(budget) : undefined)
-    console.log(`✓ Added "${name}".`)
+    const positional = rest.filter((a) => !a.startsWith("--"))
+    const [name, url, budget] = positional
+    // A trailing ! marks a must-have: --want="skinn!, hengerfeste, ryggekamera"
+    const requirements = parseRequirements(rest.find((a) => a.startsWith("--want="))?.slice("--want=".length) ?? "")
+    if (!name || !url) throw new Error('Usage: bazaar search add "<name>" "<url>" [budget] [--want="skinn!, hengerfeste"]')
+    store.addSearch(name, normalizeSearchUrl(url).toString(), budget ? Number(budget) : undefined, 6, requirements)
+    console.log(`✓ Added "${name}".${requirements.length ? ` Ønsker: ${formatRequirements(requirements)}` : ""}`)
   } else {
-    for (const s of store.listSearches(false))
-      console.log(`  [${s.id}] ${s.name}${s.budget_nok ? ` · budget ${kr(s.budget_nok)}` : ""}\n      ${s.url}`)
+    for (const s of store.listSearches(false)) {
+      const reqs = parseSearchRequirements(s)
+      console.log(`  [${s.id}] ${s.name}${s.budget_nok ? ` · budsjett ${kr(s.budget_nok)}` : ""}`)
+      if (reqs.length) console.log(`      ønsker: ${formatRequirements(reqs)}`)
+      console.log(`      ${s.url}`)
+    }
   }
   store.close()
 }
@@ -262,6 +270,10 @@ function printDeal(deal: ScoredListing): void {
   if (plan?.haggleableIntoBudget) console.log(`        💬 ${kr(plan.overBudgetBy!)} over budsjett — forhandlebart ned til ${kr(plan.target)}`)
   else if (plan && plan.target < listing.price) console.log(`        💬 mål ${kr(plan.target)} · gå fra ved ${kr(plan.walkAway)}`)
   for (const finding of deal.registryFindings) console.log(`        ⚠ ${finding}`)
+  if (deal.requirements?.length) {
+    const icon = { ja: "✓", nei: "✗", kanskje: "?" }
+    console.log(`        ${deal.requirements.map((r) => `${icon[r.status]} ${r.requirement}`).join("   ")}`)
+  }
   if (deal.analysis) {
     for (const flag of deal.analysis.redFlags.slice(0, 3)) console.log(`        · ${flag.claim}`)
   }
@@ -393,7 +405,8 @@ const USAGE = `bazaar — finn.no deal hunter
   provider vegvesen setup              paste a Vegvesen API key
   provider primary <hugin|openrouter>  choose the first provider tried
 
-  search add "<name>" "<url>" [budget] watch a finn saved-search URL
+  search add "<name>" "<url>" [budget] [--want="skinn!, hengerfeste"]
+                                       watch a saved search; ! marks a must-have
   search list                          show configured searches
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
