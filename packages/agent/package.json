@@ -1,0 +1,16 @@
+{
+  "name": "@bazaar/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bazaar": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts"
+  },
+  "dependencies": {
+    "llm-brain": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}
