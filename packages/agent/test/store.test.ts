@@ -253,3 +253,95 @@ describe("notifications are only recorded once delivered", () => {
   })
 })
 
+
+describe("finding price drops", () => {
+  const withHistory = (adId: number, prices: number[]) => {
+    store.ingest([entry({ ad_id: adId, price: { amount: prices[0]! } })])
+    for (const p of prices.slice(1)) store.ingest([entry({ ad_id: adId, price: { amount: p } })])
+  }
+
+  test("reports a cut, with the price it came down from", () => {
+    withHistory(1, [100_000, 90_000])
+    const drops = store.priceDrops()
+    expect(drops).toHaveLength(1)
+    expect(drops[0]).toMatchObject({ ad_id: 1, price: 90_000, previous_price: 100_000 })
+  })
+
+  test("a price RISE is not a drop", () => {
+    withHistory(2, [90_000, 100_000])
+    expect(store.priceDrops().map((d) => d.ad_id)).not.toContain(2)
+  })
+
+  test("an unchanged price is not a drop", () => {
+    store.ingest([entry({ ad_id: 3, price: { amount: 100_000 } })])
+    store.ingest([entry({ ad_id: 3, price: { amount: 100_000 } })])
+    expect(store.priceDrops().map((d) => d.ad_id)).not.toContain(3)
+  })
+
+  test("trivial cuts are ignored, since they are not news", () => {
+    withHistory(4, [100_000, 99_500])
+    expect(store.priceDrops({ minDropNok: 1000 })).toHaveLength(0)
+    expect(store.priceDrops({ minDropNok: 100 })).toHaveLength(1)
+  })
+
+  test("only the most recent cut is reported, not every step down", () => {
+    withHistory(5, [120_000, 110_000, 95_000])
+    const drops = store.priceDrops()
+    expect(drops).toHaveLength(1)
+    expect(drops[0]).toMatchObject({ price: 95_000, previous_price: 110_000 })
+  })
+
+  test("a delisted car is not reported, however far it fell", () => {
+    withHistory(6, [100_000, 80_000])
+    store.db.query("UPDATE listings SET delisted_at = ? WHERE ad_id = 6").run(Date.now())
+    expect(store.priceDrops()).toHaveLength(0)
+  })
+
+  test("a watched car is reported even below the score threshold", () => {
+    // You asked to hear about this one; its score is beside the point.
+    // A modest 8% cut, so this tests the watch flag rather than the steepness
+    // escape hatch.
+    withHistory(7, [100_000, 92_000])
+    store.db.query("INSERT INTO valuations (ad_id, computed_at, comp_count, score) VALUES (7, 0, 10, 2)").run()
+    expect(store.priceDrops({ minScore: 8 })).toHaveLength(0)
+
+    store.db.query("INSERT INTO watchlist (ad_id, added_at) VALUES (7, 0)").run()
+    expect(store.priceDrops({ minScore: 8 })).toHaveLength(1)
+  })
+
+  test("watchedOnly excludes everything else", () => {
+    withHistory(8, [100_000, 92_000])
+    expect(store.priceDrops({ watchedOnly: true })).toHaveLength(0)
+  })
+})
+
+describe("a steep cut is news regardless of score", () => {
+  const withHistory = (adId: number, prices: number[], score?: number) => {
+    store.ingest([entry({ ad_id: adId, price: { amount: prices[0]! } })])
+    for (const p of prices.slice(1)) store.ingest([entry({ ad_id: adId, price: { amount: p } })])
+    if (score != null) store.db.query("INSERT INTO valuations (ad_id, computed_at, comp_count, score) VALUES (?,0,10,?)").run(adId, score)
+  }
+
+  test("a 41% cut reports even on a mediocre car", () => {
+    // The live case: Mazda CX-5, 84 900 → 50 000 kr, scoring 5.7. A pure
+    // score gate said nothing at all.
+    withHistory(20, [84_900, 50_000], 5.7)
+    expect(store.priceDrops({ minScore: 8 })).toHaveLength(1)
+  })
+
+  test("a small cut on a mediocre car stays quiet", () => {
+    withHistory(21, [100_000, 97_000], 5.7)
+    expect(store.priceDrops({ minScore: 8 })).toHaveLength(0)
+  })
+
+  test("a small cut on a good car still reports", () => {
+    withHistory(22, [100_000, 97_000], 9.1)
+    expect(store.priceDrops({ minScore: 8 })).toHaveLength(1)
+  })
+
+  test("the steepness threshold is adjustable", () => {
+    withHistory(23, [100_000, 82_000], 1)
+    expect(store.priceDrops({ minScore: 8, bigDropPct: 0.15 })).toHaveLength(1)
+    expect(store.priceDrops({ minScore: 8, bigDropPct: 0.25 })).toHaveLength(0)
+  })
+})

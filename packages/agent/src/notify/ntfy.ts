@@ -82,6 +82,48 @@ export async function send(notification: Notification, config = loadNtfyConfig()
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
 
+/**
+ * A price cut on a car you are following.
+ *
+ * Deliberately louder than a new find. A new listing is one of many; a seller
+ * moving on price is a specific, time-limited opening on a car you already
+ * decided you wanted.
+ */
+export function dropNotification(drop: {
+  heading: string
+  url: string
+  price: number
+  previous_price: number
+  year: number | null
+  mileage: number | null
+  location: string | null
+  fair_value: number | null
+  watched: number
+}): Notification {
+  const cut = drop.previous_price - drop.price
+  const share = drop.previous_price > 0 ? cut / drop.previous_price : 0
+
+  const lines = [
+    `${kr(drop.previous_price)} → ${kr(drop.price)}  (−${(share * 100).toFixed(0)} %)`,
+    [drop.year, drop.mileage != null ? `${drop.mileage.toLocaleString("nb-NO")} km` : null, drop.location]
+      .filter(Boolean)
+      .join(" · "),
+  ]
+  if (drop.fair_value) {
+    const residual = (drop.fair_value - drop.price) / drop.fair_value
+    if (residual > 0) lines.push(`Nå ${(residual * 100).toFixed(0)} % under marked (est. ${kr(drop.fair_value)})`)
+  }
+
+  return {
+    title: `↓ ${kr(cut)} · ${drop.heading}`,
+    body: lines.join("\n"),
+    // A cut on a followed car outranks a new find: you already want this one.
+    priority: drop.watched ? 4 : 3,
+    tags: drop.watched ? ["chart_with_downwards_trend", "star"] : ["chart_with_downwards_trend"],
+    click: drop.url,
+  }
+}
+
 /** Turn a scored listing into something worth reading on a lock screen. */
 export function dealNotification(deal: ScoredListing, budget?: number): Notification {
   const { listing, valuation, plan, score } = deal

@@ -11,7 +11,7 @@ import { isConfigured as vegvesenConfigured, saveAuth as saveVegvesenAuth, looku
 import { stateDir } from "./paths.ts"
 import { valueAll, enrichTop, type ScoredListing } from "./pipeline.ts"
 import { buildHagglePlan } from "./value/haggle.ts"
-import { saveNtfyConfig, send, dealNotification } from "./notify/ntfy.ts"
+import { saveNtfyConfig, send, dealNotification, dropNotification } from "./notify/ntfy.ts"
 import { buildCorpus } from "./corpus.ts"
 import { parseRequirements, formatRequirements, summarise } from "./value/requirements.ts"
 import { startServer } from "./server.ts"
@@ -459,6 +459,23 @@ async function notifyCmd(args: string[]): Promise<void> {
       failed++
     }
   }
+  // Price cuts, after the new finds. Each distinct price alerts once, so a
+  // seller who cuts twice is reported twice — which is the point, since the
+  // second cut says more than the first.
+  const drops = store.priceDrops({ minScore, minDropNok: 1000 })
+  let dropsSent = 0
+  for (const drop of drops.slice(0, max)) {
+    const reason = `price-drop:${drop.price}`
+    if (store.wasNotified(drop.ad_id, reason)) continue
+    if (await send(dropNotification(drop))) {
+      store.markNotified(drop.ad_id, reason)
+      dropsSent++
+    } else {
+      failed++
+    }
+  }
+  if (dropsSent) console.log(`${dropsSent} prisnedgang varslet.`)
+
   const remaining = Math.max(0, pending.length - max)
   console.log(
     `${sent} notification${sent === 1 ? "" : "s"} sent.` +

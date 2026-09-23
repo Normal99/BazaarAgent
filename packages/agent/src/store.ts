@@ -231,6 +231,21 @@ export interface DealRow {
   readonly provider: string | null
 }
 
+export interface PriceDrop {
+  readonly ad_id: number
+  readonly heading: string
+  readonly url: string
+  readonly price: number
+  readonly previous_price: number
+  readonly changed_at: number
+  readonly location: string | null
+  readonly year: number | null
+  readonly mileage: number | null
+  readonly score: number | null
+  readonly fair_value: number | null
+  readonly watched: number
+}
+
 export interface SweepResult {
   readonly seen: number
   readonly changes: Change[]
@@ -734,6 +749,55 @@ export class Store {
       )
       .all()
     return new Set(rows.map((r) => r.ad_id))
+  }
+
+/**
+   * Listings whose price has come down since we last saw it.
+   *
+   * A seller cutting their price is telling you something about their floor,
+   * and it is the single most actionable thing that can happen to a car you
+   * are already interested in. Price history only records actual changes, so
+   * "more than one observation" already means "the price moved".
+   */
+  priceDrops(options: { watchedOnly?: boolean; minScore?: number; minDropNok?: number; bigDropPct?: number } = {}): PriceDrop[] {
+    const minDrop = options.minDropNok ?? 1000
+    // A cut this steep is news whatever the car scored. Live data made the
+    // case: a Mazda CX-5 came down 34 900 kr — 41% — on a car scoring 5.7, and
+    // a pure score gate would have said nothing at all. A drop that large
+    // means something changed, and that is worth knowing either way.
+    const bigDrop = options.bigDropPct ?? 0.15
+    const rows = this.db
+      .query<PriceDrop, []>(
+        `SELECT l.ad_id, l.heading, l.url, l.price AS price, l.location, l.year, l.mileage,
+                prev.price AS previous_price, latest.observed_at AS changed_at,
+                v.score, v.fair_value,
+                CASE WHEN w.ad_id IS NULL THEN 0 ELSE 1 END AS watched
+         FROM listings l
+         JOIN (SELECT ad_id, price, observed_at,
+                      ROW_NUMBER() OVER (PARTITION BY ad_id ORDER BY observed_at DESC, id DESC) rn
+               FROM price_history) latest ON latest.ad_id = l.ad_id AND latest.rn = 1
+         JOIN (SELECT ad_id, price,
+                      ROW_NUMBER() OVER (PARTITION BY ad_id ORDER BY observed_at DESC, id DESC) rn
+               FROM price_history) prev ON prev.ad_id = l.ad_id AND prev.rn = 2
+         LEFT JOIN valuations v ON v.ad_id = l.ad_id
+         LEFT JOIN watchlist w ON w.ad_id = l.ad_id
+         WHERE l.delisted_at IS NULL AND l.price < prev.price
+         ORDER BY latest.observed_at DESC`,
+      )
+      .all()
+
+    return rows.filter((row) => {
+      const cut = row.previous_price - row.price
+      if (cut < minDrop) return false
+      if (options.watchedOnly && !row.watched) return false
+
+      // Three ways through the score gate: you are following the car, or the
+      // car was already interesting, or the cut is steep enough to be the
+      // story by itself.
+      const steep = row.previous_price > 0 && cut / row.previous_price >= bigDrop
+      if (options.minScore != null && !row.watched && !steep && (row.score ?? 0) < options.minScore) return false
+      return true
+    })
   }
 
   isWatched(adId: number): boolean {
