@@ -1,0 +1,12 @@
+{
+  "name": "llm-brain",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Provider-neutral LLM layer: Hugin (text <tool_call> emulation) and OpenRouter (native tool calling), both vision-capable, behind one contract with quality-gated fallback.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}

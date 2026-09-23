@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Never commit credentials. Hugin session cookies and OpenRouter keys live in
+# the state directory (~/.bazaaragent), never in the tree.
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+*.cookie
+hugin.json
+openrouter.json
+vegvesen.json
+
+# Scraped HTML fixtures are large; the small committed ones live in
+# packages/*/test/fixtures and are added explicitly with `git add -f`.
+/tmp-fixtures/
