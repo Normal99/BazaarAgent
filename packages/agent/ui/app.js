@@ -330,6 +330,7 @@ async function viewSearches() {
         <dt>Sist sjekket</dt><dd>${s.last_swept ? new Date(s.last_swept).toLocaleString("nb-NO") : "aldri"}</dd>
       </dl>
     </div>`).join("")}
+    ${await homeSection()}
     <div class="section">
       <h2>Legg til søk</h2>
       <form class="add" id="addf">
@@ -342,6 +343,17 @@ async function viewSearches() {
       </form>
     </div>`
 
+  const toggle = document.getElementById("toggledist")
+  if (toggle) toggle.onclick = async () => {
+    const home = await api("/api/home")
+    await fetch("/api/home", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scoreDistance: !home.scoreDistance }),
+    })
+    route()
+  }
+
   document.getElementById("addf").onsubmit = async (e) => {
     e.preventDefault()
     const f = new FormData(e.target)
@@ -353,6 +365,24 @@ async function viewSearches() {
     if (res.error) alert(res.error)
     else route()
   }
+}
+
+// Distance is always shown; whether it moves the ranking is a preference, so
+// it lives next to the searches rather than buried in a config file.
+async function homeSection() {
+  const home = await api("/api/home")
+  if (!home) return `<div class="section"><h2>Hjemme</h2>
+    <p style="margin:0;color:var(--text-muted);font-size:14px">Ikke satt — avstand telles ikke.
+    Kjør <code>./bazaar home "Skien"</code>.</p></div>`
+  return `<div class="section">
+    <h2>Hjemme</h2>
+    <dl class="figures">
+      <dt>Sted</dt><dd>${esc(home.label)}</dd>
+      <dt>Avstand i scoren</dt><dd>${home.scoreDistance ? (home.weight === 1 ? "ja" : `ja (vekt ${home.weight})`) : "nei"}</dd>
+    </dl>
+    <button class="copy" id="toggledist">${home.scoreDistance ? "Slå av avstand i scoren" : "Slå på avstand i scoren"}</button>
+    <p style="margin:8px 0 0;font-size:12px;color:var(--text-muted)">Avstand vises uansett — dette styrer bare om den påvirker rangeringen. Kjør <code>./bazaar score</code> etterpå.</p>
+  </div>`
 }
 
 async function viewHealth() {

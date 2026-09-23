@@ -244,3 +244,4 @@ describe("notifications are only recorded once delivered", () => {
     expect(store.markNotified(1, "price-drop")).toBe(true)
   })
 })
+

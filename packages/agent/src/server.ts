@@ -7,7 +7,7 @@ import { parseSearchRequirements } from "./store.ts"
 import { parseRequirements, summarise, type RequirementMatch } from "./value/requirements.ts"
 import { euControlFor } from "./pipeline.ts"
 import { travelCost } from "./value/distance.ts"
-import { loadHome } from "./home.ts"
+import { loadHome, setDistanceScoring } from "./home.ts"
 import { stripUnreliableOdometerClaims } from "./value/score.ts"
 
 // A small JSON API plus the static PWA. One server, reached from a phone over
@@ -48,6 +48,11 @@ export function startServer(options: ServerOptions = {}) {
             ? await addSearch(store, request)
             : json(store.listSearches(false).map((row) => ({ ...row, requirements: parseSearchRequirements(row) })))
         if (path === "/api/health") return json(health(store))
+        if (path === "/api/home") {
+          if (request.method !== "POST") return json(loadHome() ?? null)
+          const body = (await request.json()) as { scoreDistance?: boolean; weight?: number }
+          return json(setDistanceScoring(body))
+        }
         if (path.startsWith("/api/watch/")) return toggleWatch(store, Number(path.slice("/api/watch/".length)))
 
         // Static UI. Unknown paths fall back to the shell so client routing works.
@@ -73,7 +78,7 @@ function deals(store: Store, url: URL) {
 
   return {
     budget,
-    home: home ? { label: home.label } : null,
+    home: home ? { label: home.label, scoreDistance: home.scoreDistance, weight: home.weight } : null,
     deals: store.topDeals(limit, min).map((row) => {
       const model = row.model_json ? JSON.parse(row.model_json) : {}
       const levers: Array<{ estValueNok: number }> = row.levers_json ? JSON.parse(row.levers_json) : []

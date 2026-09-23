@@ -11,16 +11,48 @@ import type { LatLon } from "./value/distance.ts"
 
 export interface Home extends LatLon {
   readonly label: string
+  /**
+   * Whether distance moves the score.
+   *
+   * Separate from knowing where you are, because the two are genuinely
+   * different questions. Distance is always worth *showing* — a 900 km trip is
+   * a fact you want on the card — but whether it should push a car down the
+   * ranking is a preference. Someone happy to drive for the right car wants it
+   * displayed and ignored; someone buying a runabout wants it weighted hard.
+   */
+  readonly scoreDistance: boolean
+  /** Multiplier on the penalty, for tuning short of turning it off. 1 = default. */
+  readonly weight: number
 }
 
 const HOME_PATH = () => join(stateDir, "home.json")
 
+/**
+ * Read a stored home, tolerating files written before options were added.
+ *
+ * Pure, so the defaulting rules can be tested without touching disk.
+ */
+export function parseHome(raw: unknown): Home | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = raw as Partial<Home>
+  if (typeof value.lat !== "number" || typeof value.lon !== "number") return undefined
+  if (!Number.isFinite(value.lat) || !Number.isFinite(value.lon)) return undefined
+  return {
+    lat: value.lat,
+    lon: value.lon,
+    label: typeof value.label === "string" && value.label ? value.label : "hjemme",
+    // Defaults to on: a home was set deliberately, so the obvious intent is
+    // for it to count. Files written before this option existed have neither
+    // field and land here.
+    scoreDistance: value.scoreDistance !== false,
+    weight: typeof value.weight === "number" && value.weight >= 0 ? value.weight : 1,
+  }
+}
+
 export function loadHome(): Home | undefined {
   try {
     if (!existsSync(HOME_PATH())) return undefined
-    const raw = JSON.parse(readFileSync(HOME_PATH(), "utf8")) as Partial<Home>
-    if (typeof raw.lat !== "number" || typeof raw.lon !== "number") return undefined
-    return { lat: raw.lat, lon: raw.lon, label: typeof raw.label === "string" ? raw.label : "hjemme" }
+    return parseHome(JSON.parse(readFileSync(HOME_PATH(), "utf8")))
   } catch {
     return undefined
   }
@@ -41,7 +73,8 @@ export function saveHome(home: Home): void {
  */
 export async function resolveHome(input: string): Promise<Home> {
   const pair = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(input)
-  if (pair) return { lat: Number(pair[1]), lon: Number(pair[2]), label: `${pair[1]}, ${pair[2]}` }
+  if (pair)
+    return { lat: Number(pair[1]), lon: Number(pair[2]), label: `${pair[1]}, ${pair[2]}`, scoreDistance: true, weight: 1 }
 
   const url = new URL("https://nominatim.openstreetmap.org/search")
   url.searchParams.set("q", input)
@@ -58,5 +91,24 @@ export async function resolveHome(input: string): Promise<Home> {
   const hit = results[0]
   if (!hit?.lat || !hit?.lon) throw new Error(`No place in Norway matched "${input}". Try a postcode, or "lat,lon".`)
 
-  return { lat: Number(hit.lat), lon: Number(hit.lon), label: hit.display_name?.split(",")[0]?.trim() || input }
+  return {
+    lat: Number(hit.lat),
+    lon: Number(hit.lon),
+    label: hit.display_name?.split(",")[0]?.trim() || input,
+    scoreDistance: true,
+    weight: 1,
+  }
+}
+
+/** Change the scoring preference without re-resolving the location. */
+export function setDistanceScoring(patch: { scoreDistance?: boolean; weight?: number }): Home {
+  const home = loadHome()
+  if (!home) throw new Error('No home is set. Run `bazaar home "Skien"` first.')
+  const next: Home = {
+    ...home,
+    scoreDistance: patch.scoreDistance ?? home.scoreDistance,
+    weight: patch.weight ?? home.weight,
+  }
+  saveHome(next)
+  return next
 }

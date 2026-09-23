@@ -318,8 +318,17 @@ export function euControlFor(specs: { eu_control_due: string | null } | null, fi
   return inferred ? { text: `~${inferred.dueYear} (beregnet)`, verified: false } : { text: "ukjent", verified: false }
 }
 
-/** Distance scoring for one listing, or undefined when no home is set or the ad has no coordinates. */
+/**
+ * Distance scoring for one listing.
+ *
+ * Undefined — meaning no effect on the score — when no home is set, when the
+ * ad has no coordinates, or when distance scoring is switched off. The last
+ * case still leaves distance visible everywhere it is displayed; only the
+ * ranking stops caring.
+ */
 function distanceFor(home: ReturnType<typeof loadHome>, listing: ListingRow): { delta: number; label: string } | undefined {
-  if (!home || listing.lat == null || listing.lon == null) return undefined
-  return distancePenalty(travelCost(home, { lat: listing.lat, lon: listing.lon }).roadKm)
+  if (!home || !home.scoreDistance || listing.lat == null || listing.lon == null) return undefined
+  const penalty = distancePenalty(travelCost(home, { lat: listing.lat, lon: listing.lon }).roadKm)
+  if (home.weight === 1) return penalty
+  return { ...penalty, delta: penalty.delta * home.weight }
 }

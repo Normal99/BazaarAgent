@@ -16,7 +16,7 @@ import { buildCorpus } from "./corpus.ts"
 import { parseRequirements, formatRequirements, summarise } from "./value/requirements.ts"
 import { startServer } from "./server.ts"
 import { reap } from "./reap.ts"
-import { loadHome, saveHome, resolveHome } from "./home.ts"
+import { loadHome, saveHome, resolveHome, setDistanceScoring } from "./home.ts"
 import { travelCost } from "./value/distance.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
@@ -234,16 +234,46 @@ function serve(args: string[]): void {
 }
 
 async function homeCmd(args: string[]): Promise<void> {
-  const input = args.join(" ").trim()
-  if (!input) {
-    const home = loadHome()
-    console.log(home ? `Hjemme: ${home.label}  (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)})` : 'No home set — distance is not scored.\n  ./bazaar home "Skien"     or     ./bazaar home 59.2,9.6')
+  const scoreFlag = args.find((a) => a.startsWith("--score="))?.slice("--score=".length)
+  const weightFlag = args.find((a) => a.startsWith("--weight="))?.slice("--weight=".length)
+
+  if (scoreFlag || weightFlag) {
+    if (scoreFlag && !["on", "off"].includes(scoreFlag)) throw new Error("--score must be on or off")
+    const weight = weightFlag === undefined ? undefined : Number(weightFlag)
+    if (weight !== undefined && (!Number.isFinite(weight) || weight < 0)) throw new Error("--weight must be a number >= 0")
+    const home = setDistanceScoring({ scoreDistance: scoreFlag ? scoreFlag === "on" : undefined, weight })
+    console.log(describeHome(home))
+    console.log("  Re-run `./bazaar score` to apply it.")
     return
   }
-  const home = await resolveHome(input)
+
+  const input = args.filter((a) => !a.startsWith("--")).join(" ").trim()
+  if (!input) {
+    const home = loadHome()
+    console.log(
+      home
+        ? `${describeHome(home)}\n  ./bazaar home --score=off        stop distance affecting the score\n  ./bazaar home --weight=0.5       count it, but half as much`
+        : 'No home set — distance is not scored.\n  ./bazaar home "Skien"     or     ./bazaar home 59.2,9.6',
+    )
+    return
+  }
+  const resolved = await resolveHome(input)
+  // Keep an existing preference rather than silently re-enabling scoring when
+  // someone just corrects their town.
+  const previous = loadHome()
+  const home = previous ? { ...resolved, scoreDistance: previous.scoreDistance, weight: previous.weight } : resolved
   saveHome(home)
-  console.log(`✓ Hjemme: ${home.label}  (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)})`)
-  console.log("  Distance now counts in the score. Re-run `./bazaar score` to apply it.")
+  console.log(`✓ ${describeHome(home)}`)
+  console.log("  Re-run `./bazaar score` to apply it.")
+}
+
+function describeHome(home: NonNullable<ReturnType<typeof loadHome>>): string {
+  const scoring = home.scoreDistance
+    ? home.weight === 1
+      ? "teller i scoren"
+      : `teller i scoren (vekt ${home.weight})`
+    : "vises, men teller ikke i scoren"
+  return `Hjemme: ${home.label}  (${home.lat.toFixed(4)}, ${home.lon.toFixed(4)}) — avstand ${scoring}`
 }
 
 async function reapCmd(args: string[]): Promise<void> {
@@ -469,7 +499,8 @@ const USAGE = `bazaar — finn.no deal hunter
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
   serve [--port=N] [--host=H]          web UI for phone and desktop
-  home ["Skien" | lat,lon]             set where you are, so distance counts
+  home ["Skien" | lat,lon]             set where you are
+  home --score=on|off [--weight=N]     whether distance affects the score
   reap [--stale=H] [--max=N]           verify stale listings; retire the sold ones
   corpus [--pages=N] [--models=N]      deepen comparables for watched models
   score [--no-llm] [--max=N]           value, enrich and rank everything swept
