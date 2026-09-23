@@ -46,7 +46,23 @@ export function startServer(options: ServerOptions = {}) {
         if (path === "/api/searches")
           return request.method === "POST"
             ? await addSearch(store, request)
-            : json(store.listSearches(false).map((row) => ({ ...row, requirements: parseSearchRequirements(row) })))
+            : json(
+                store.listSearches(false).map((row) => ({
+                  ...row,
+                  requirements: parseSearchRequirements(row),
+                  active: (store.db.query("SELECT active FROM searches WHERE id = ?").get(row.id) as any)?.active === 1,
+                })),
+              )
+        if (path.startsWith("/api/searches/")) {
+          const id = Number(path.slice("/api/searches/".length).split("/")[0])
+          if (!Number.isFinite(id)) return json({ error: "bad id" }, 400)
+          if (request.method === "DELETE") return json({ deleted: store.deleteSearch(id) })
+          if (request.method === "POST") {
+            const body = (await request.json()) as { active?: boolean }
+            return json({ updated: store.setSearchActive(id, body.active !== false) })
+          }
+          return json({ error: "method not allowed" }, 405)
+        }
         if (path === "/api/health") return json(health(store))
         if (path === "/api/home") {
           if (request.method !== "POST") return json(loadHome() ?? null)
@@ -85,10 +101,13 @@ function deals(store: Store, url: URL) {
   // 400 extra queries.
   const watched = store.watchedAdIds()
   const relisted = store.relistedAdIds()
+  const bySearch = store.searchIdsByListing()
 
   return {
     budget,
     home: home ? { label: home.label, scoreDistance: home.scoreDistance, weight: home.weight } : null,
+    // So the feed can be narrowed to one hunt without a second round trip.
+    searches: store.listSearches(false).map((row) => ({ id: row.id, name: row.name })),
     deals: store.topDeals(limit, min).map((row) => {
       const model = row.model_json ? JSON.parse(row.model_json) : {}
       const levers: Array<{ estValueNok: number }> = row.levers_json ? JSON.parse(row.levers_json) : []
@@ -120,6 +139,7 @@ function deals(store: Store, url: URL) {
         parts: model.parts ?? [],
         watched: watched.has(row.ad_id),
         relisted: relisted.has(row.ad_id),
+        searchIds: bySearch.get(row.ad_id) ?? [],
         make: listing?.make ?? null,
         fuel: listing?.fuel ?? null,
         transmission: listing?.transmission ?? null,

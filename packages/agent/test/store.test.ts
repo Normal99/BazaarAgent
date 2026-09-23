@@ -345,3 +345,75 @@ describe("a steep cut is news regardless of score", () => {
     expect(store.priceDrops({ minScore: 8, bigDropPct: 0.25 })).toHaveLength(0)
   })
 })
+
+describe("managing searches", () => {
+  test("a search can be deleted, and its listings survive", () => {
+    // Listings are market data. Throwing away comparables because a hunt was
+    // renamed would quietly degrade every valuation that used them.
+    const id = store.addSearch("Slettes", "https://www.finn.no/mobility/search/car?z=1")
+    store.ingest([entry({ ad_id: 900 })], id)
+    expect(store.listSearches(false)).toHaveLength(1)
+
+    expect(store.deleteSearch(id)).toBe(true)
+    expect(store.listSearches(false)).toHaveLength(0)
+    expect(store.db.query("SELECT 1 FROM listings WHERE ad_id = 900").get()).not.toBeNull()
+  })
+
+  test("deleting unlinks it, so its requirements stop applying", () => {
+    const id = store.addSearch("Med ønsker", "https://www.finn.no/mobility/search/car?z=2", undefined, 6, [
+      { text: "skinn", required: true },
+    ])
+    store.ingest([entry({ ad_id: 901 })], id)
+    expect(store.requirementsFor(901)).toHaveLength(1)
+
+    store.deleteSearch(id)
+    expect(store.requirementsFor(901)).toEqual([])
+  })
+
+  test("deleting one search leaves another's link intact", () => {
+    const a = store.addSearch("A", "https://www.finn.no/mobility/search/car?a=1", undefined, 6, [{ text: "skinn", required: true }])
+    const b = store.addSearch("B", "https://www.finn.no/mobility/search/car?b=1", undefined, 6, [{ text: "hengerfeste", required: false }])
+    store.ingest([entry({ ad_id: 902 })], a)
+    store.ingest([entry({ ad_id: 902 })], b)
+
+    store.deleteSearch(a)
+    expect(store.requirementsFor(902).map((r) => r.text)).toEqual(["hengerfeste"])
+  })
+
+  test("deleting something that is not there reports so", () => {
+    expect(store.deleteSearch(4242)).toBe(false)
+  })
+
+  test("pausing stops it being swept but keeps the configuration", () => {
+    const id = store.addSearch("Pauses", "https://www.finn.no/mobility/search/car?p=1", 150000)
+    store.setSearchActive(id, false)
+
+    expect(store.listSearches(true)).toHaveLength(0) // not swept
+    expect(store.listSearches(false)).toHaveLength(1) // still configured
+    expect(store.getSearch(id)?.budget_nok).toBe(150000)
+
+    store.setSearchActive(id, true)
+    expect(store.listSearches(true)).toHaveLength(1)
+  })
+
+  test("a paused search's requirements stop applying too", () => {
+    const id = store.addSearch("P", "https://www.finn.no/mobility/search/car?p=2", undefined, 6, [{ text: "skinn", required: true }])
+    store.ingest([entry({ ad_id: 903 })], id)
+    expect(store.requirementsFor(903)).toHaveLength(1)
+
+    store.setSearchActive(id, false)
+    expect(store.requirementsFor(903)).toEqual([])
+  })
+
+  test("the feed can be told which searches found each listing", () => {
+    const a = store.addSearch("A", "https://www.finn.no/mobility/search/car?x=1")
+    const b = store.addSearch("B", "https://www.finn.no/mobility/search/car?x=2")
+    store.ingest([entry({ ad_id: 910 })], a)
+    store.ingest([entry({ ad_id: 910 })], b)
+    store.ingest([entry({ ad_id: 911 })], b)
+
+    const map = store.searchIdsByListing()
+    expect(map.get(910)!.sort()).toEqual([a, b].sort())
+    expect(map.get(911)).toEqual([b])
+  })
+})

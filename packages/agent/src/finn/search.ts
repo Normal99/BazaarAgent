@@ -95,6 +95,57 @@ export function normalizeSearchUrl(raw: string): URL {
   return url
 }
 
+/**
+ * Which filters finn actually applied, versus which were asked for.
+ *
+ * finn does not reject a filter it does not understand — it drops it and
+ * returns the results as if you had never asked. A search built with the wrong
+ * parameter name therefore looks configured and quietly sweeps the entire
+ * market. Seen live: `?make=0.817&model=1.817.1621&price_to=250000` came back
+ * with selected_filters listing only the price, and 38 394 matches instead of
+ * a few hundred Tiguans.
+ *
+ * The check is possible because finn echoes what it honoured in
+ * `metadata.selected_filters`, so the two can simply be compared.
+ */
+export interface FilterCheck {
+  readonly requested: string[]
+  readonly applied: string[]
+  /** Query parameters finn ignored. Non-empty means the search is not doing what it says. */
+  readonly ignored: string[]
+  readonly matchCount: number
+}
+
+/** Parameters that steer results rather than filter them. */
+const NON_FILTER_PARAMS = new Set(["sort", "page", "q"])
+
+/**
+ * finn accepts some parameters under one name and reports them under another.
+ * `make` and `model` are both honoured but echoed back as `variant`, so a
+ * naive comparison would report a working search as broken.
+ */
+const PARAM_ALIASES: Record<string, string> = { make: "variant", model: "variant" }
+const canonical = (name: string) => PARAM_ALIASES[name] ?? name
+
+export function checkFilters(html: string, url: URL): FilterCheck {
+  const data = extractSearchState(html) as {
+    metadata?: { selected_filters?: Array<{ parameters?: Array<{ parameter_name?: string }> }>; result_size?: { match_count?: number } }
+  }
+  const applied = new Set<string>()
+  for (const filter of data.metadata?.selected_filters ?? []) {
+    for (const parameter of filter.parameters ?? []) {
+      if (parameter.parameter_name) applied.add(parameter.parameter_name)
+    }
+  }
+  const requested = [...new Set([...url.searchParams.keys()])].filter((k) => !NON_FILTER_PARAMS.has(k))
+  return {
+    requested,
+    applied: [...applied],
+    ignored: requested.filter((k) => !applied.has(canonical(k))),
+    matchCount: data.metadata?.result_size?.match_count ?? 0,
+  }
+}
+
 export interface SweepOptions {
   /** Hard ceiling on pages. finn caps at 50; the default keeps a routine poll cheap. */
   readonly maxPages?: number

@@ -64,7 +64,7 @@ async function route() {
 // ---------------------------------------------------------------------------
 
 const FILTER_KEY = "bazaar.filters"
-const defaultFilters = () => ({ sort: "score", minScore: 0, maxPrice: null, seller: "alle", hideAuction: false, q: "" })
+const defaultFilters = () => ({ sort: "score", minScore: 0, maxPrice: null, seller: "alle", hideAuction: false, q: "", searchId: null })
 
 function loadFilters() {
   try {
@@ -96,19 +96,27 @@ function applyFilters(deals) {
     .filter((d) => (filters.maxPrice == null ? true : d.price <= filters.maxPrice))
     .filter((d) => (filters.seller === "alle" ? true : (d.dealerSegment ?? "").toLowerCase().startsWith(filters.seller)))
     .filter((d) => (filters.hideAuction ? d.listingType !== "auction" : true))
+    // A mixed feed from five hunts is hard to reason about; narrowing to one
+    // is the first thing you want once more than one search exists.
+    .filter((d) => (filters.searchId == null ? true : (d.searchIds ?? []).includes(filters.searchId)))
     .filter((d) => (q ? `${d.heading} ${d.make ?? ""} ${d.location ?? ""}`.toLowerCase().includes(q) : true))
     .sort(SORTS[filters.sort]?.fn ?? SORTS.score.fn)
 }
 
-function filterBar(total, shown) {
+function filterBar(total, shown, searches = []) {
   const opts = Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${filters.sort === k ? " selected" : ""}>${v.label}</option>`).join("")
-  const active = filters.minScore > 0 || filters.maxPrice != null || filters.seller !== "alle" || filters.hideAuction || filters.q
+  const active =
+    filters.minScore > 0 || filters.maxPrice != null || filters.seller !== "alle" || filters.hideAuction || filters.q || filters.searchId != null
   return `<div class="filters">
     <div class="filter-row">
       <input id="f-q" class="search" type="search" placeholder="Søk merke, modell, sted…" value="${esc(filters.q)}">
       <select id="f-sort" class="select">${opts}</select>
       <button id="f-more" class="chip${active ? " on" : ""}" aria-expanded="false">Filter${active ? " •" : ""}</button>
     </div>
+    ${searches.length > 1 ? `<div class="searchchips" role="group" aria-label="Filtrer på søk">
+      <button data-search="" class="${filters.searchId == null ? "on" : ""}">Alle søk</button>
+      ${searches.map((x) => `<button data-search="${x.id}" class="${filters.searchId === x.id ? "on" : ""}">${esc(x.name)}</button>`).join("")}
+    </div>` : ""}
     <div class="filter-panel" id="f-panel" hidden>
       <label>Minste score <output id="f-score-out">${filters.minScore.toFixed(1)}</output>
         <input id="f-score" type="range" min="0" max="10" step="0.5" value="${filters.minScore}"></label>
@@ -151,6 +159,8 @@ function wireFilters(rerender) {
   const auction = $("f-auction")
   if (auction) auction.onchange = (e) => update({ hideAuction: e.target.checked })
   for (const b of document.querySelectorAll("[data-seller]")) b.onclick = () => update({ seller: b.dataset.seller })
+  for (const b of document.querySelectorAll("[data-search]"))
+    b.onclick = () => update({ searchId: b.dataset.search ? Number(b.dataset.search) : null })
   const reset = $("f-reset")
   if (reset) reset.onclick = () => update(defaultFilters())
 }
@@ -175,7 +185,7 @@ async function viewDeals({ watchOnly }) {
     }
 
     main.innerHTML =
-      (watchOnly ? "" : filterBar(pool.length, deals.length)) +
+      (watchOnly ? "" : filterBar(pool.length, deals.length, feedCache.searches ?? [])) +
       (deals.length === 0
         ? `<p class="empty">Ingen treff med disse filtrene.<br><span class="hint">Prøv å senke minste score eller heve maks pris.</span></p>`
         : `<div class="cards">${deals.map(card).join("")}</div>`)
@@ -549,8 +559,8 @@ async function viewSearches() {
   title.textContent = "Søk"
   const rows = await api("/api/searches")
   main.innerHTML = `
-    ${rows.map((s) => `<div class="section">
-      <h2>${esc(s.name)}</h2>
+    ${rows.map((s) => `<div class="section${s.active === false ? " paused" : ""}">
+      <h2>${esc(s.name)}${s.active === false ? ' <span class="badge low">pauset</span>' : ""}</h2>
       <p style="word-break:break-all;font-size:13px;color:var(--text-muted);margin:0">${esc(s.url)}</p>
       <dl class="figures" style="margin-top:8px">
         <dt>Budsjett</dt><dd>${s.budget_nok ? kr(s.budget_nok) : "—"}</dd>
@@ -558,6 +568,10 @@ async function viewSearches() {
         <dt>Ønsker</dt><dd>${s.requirements?.length ? s.requirements.map((r) => esc(r.text) + (r.required ? "!" : "")).join(", ") : "—"}</dd>
         <dt>Sist sjekket</dt><dd>${s.last_swept ? new Date(s.last_swept).toLocaleString("nb-NO") : "aldri"}</dd>
       </dl>
+      <div class="rowbtns">
+        <button class="ghostbtn" data-pause="${s.id}" data-active="${s.active !== false}">${s.active === false ? "Start igjen" : "Pause"}</button>
+        <button class="ghostbtn danger" data-del="${s.id}" data-name="${esc(s.name)}">Slett</button>
+      </div>
     </div>`).join("")}
     ${await homeSection()}
     <div class="section">
@@ -571,6 +585,37 @@ async function viewSearches() {
         <button>Legg til</button>
       </form>
     </div>`
+
+  for (const b of main.querySelectorAll("[data-pause]")) {
+    b.onclick = async () => {
+      await fetch(`/api/searches/${b.dataset.pause}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: b.dataset.active !== "true" }),
+      })
+      feedCache = null
+      route()
+    }
+  }
+  for (const b of main.querySelectorAll("[data-del]")) {
+    b.onclick = async () => {
+      // Two taps rather than a modal: confirm() blocks the page, and a
+      // destructive action still should not happen on one stray tap.
+      if (b.dataset.armed !== "1") {
+        b.dataset.armed = "1"
+        b.textContent = "Slett – trykk igjen"
+        setTimeout(() => {
+          if (!b.isConnected) return
+          b.dataset.armed = "0"
+          b.textContent = "Slett"
+        }, 4000)
+        return
+      }
+      await fetch(`/api/searches/${b.dataset.del}`, { method: "DELETE" })
+      feedCache = null
+      route()
+    }
+  }
 
   const toggle = document.getElementById("toggledist")
   if (toggle) toggle.onclick = async () => {

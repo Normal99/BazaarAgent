@@ -3,7 +3,7 @@ import { configureHugin, huginStatus, configureOpenRouter, openRouterStatus } fr
 import { initBrain, loadBrainConfig, saveBrainConfig, providersFor, huginConfigured, openRouterConfigured } from "./llm/brain.ts"
 import { Store, parseSearchRequirements } from "./store.ts"
 import { PoliteClient } from "./http.ts"
-import { sweepSearch, normalizeSearchUrl } from "./finn/search.ts"
+import { sweepSearch, normalizeSearchUrl, checkFilters } from "./finn/search.ts"
 import { parseItemPage } from "./finn/item.ts"
 import { analyzeListing } from "./llm/analyze.ts"
 import { selectImages } from "./llm/images.ts"
@@ -170,7 +170,12 @@ async function sweep(args: string[]): Promise<void> {
 
   for (const search of searches) {
     console.log(`\n${search.name}  (${search.url})`)
-    const entries = await sweepSearch(client, normalizeSearchUrl(search.url), { maxPages: pages })
+    const searchUrl = normalizeSearchUrl(search.url)
+    const first = await client.get(searchUrl.toString())
+    const check = checkFilters(first.body, searchUrl)
+    if (check.ignored.length > 0)
+      console.log(`  ⚠ finn ignorerer ${check.ignored.join(", ")} — dette søket henter ${check.matchCount.toLocaleString("nb-NO")} treff, ikke det du ba om.`)
+    const entries = await sweepSearch(client, searchUrl, { maxPages: pages })
     console.log(`  ${entries.length} listings`)
     if (dryRun) {
       console.log("  --dry-run: nothing written")
@@ -200,12 +205,46 @@ async function searchCmd(args: string[]): Promise<void> {
     // A trailing ! marks a must-have: --want="skinn!, hengerfeste, ryggekamera"
     const requirements = parseRequirements(rest.find((a) => a.startsWith("--want="))?.slice("--want=".length) ?? "")
     if (!name || !url) throw new Error('Usage: bazaar search add "<name>" "<url>" [budget] [--want="skinn!, hengerfeste"]')
-    store.addSearch(name, normalizeSearchUrl(url).toString(), budget ? Number(budget) : undefined, 6, requirements)
+    const normalised = normalizeSearchUrl(url)
+
+    // finn drops a filter it does not understand instead of rejecting it, so a
+    // mistyped parameter yields a search that looks configured and quietly
+    // sweeps the whole market. Ask finn what it actually applied before saving.
+    const check = checkFilters((await new PoliteClient().get(normalised.toString())).body, normalised)
+    if (check.ignored.length > 0) {
+      console.log(`⚠  FINN IGNORERTE: ${check.ignored.join(", ")}`)
+      console.log(`   Søket gir ${check.matchCount.toLocaleString("nb-NO")} treff — altså nesten hele markedet, ikke det du ba om.`)
+      console.log("   Åpne søket på finn.no, bruk filtrene der, og kopier adressen på nytt.")
+      if (!rest.includes("--force")) throw new Error("Avbrutt. Legg til --force for å lagre det likevel.")
+      console.log("   --force: lagrer likevel.")
+    } else {
+      console.log(`   Filtre bekreftet av finn: ${check.applied.join(", ") || "ingen"} · ${check.matchCount.toLocaleString("nb-NO")} treff`)
+    }
+
+    store.addSearch(name, normalised.toString(), budget ? Number(budget) : undefined, 6, requirements)
     console.log(`✓ Added "${name}".${requirements.length ? ` Ønsker: ${formatRequirements(requirements)}` : ""}`)
+  } else if (action === "remove" || action === "rm" || action === "delete") {
+    const id = Number(rest[0])
+    if (!Number.isFinite(id)) throw new Error("Usage: bazaar search remove <id>   (see `bazaar search list`)")
+    const search = store.getSearch(id)
+    if (!search) throw new Error(`No search with id ${id}.`)
+    store.deleteSearch(id)
+    // The listings stay: they are market data, and discarding comparables
+    // because a hunt was renamed would quietly degrade every valuation.
+    console.log(`✓ Removed "${search.name}". Annonsene den fant beholdes som sammenligningsgrunnlag.`)
+  } else if (action === "pause" || action === "resume") {
+    const id = Number(rest[0])
+    if (!Number.isFinite(id)) throw new Error(`Usage: bazaar search ${action} <id>`)
+    const search = store.getSearch(id)
+    if (!search) throw new Error(`No search with id ${id}.`)
+    store.setSearchActive(id, action === "resume")
+    console.log(`✓ "${search.name}" ${action === "resume" ? "sweepes igjen" : "sweepes ikke lenger (konfigurasjonen er beholdt)"}.`)
   } else {
+    const active = new Set(store.listSearches(true).map((s) => s.id))
     for (const s of store.listSearches(false)) {
       const reqs = parseSearchRequirements(s)
-      console.log(`  [${s.id}] ${s.name}${s.budget_nok ? ` · budsjett ${kr(s.budget_nok)}` : ""}`)
+      const paused = active.has(s.id) ? "" : "  (pauset)"
+      console.log(`  [${s.id}] ${s.name}${s.budget_nok ? ` · budsjett ${kr(s.budget_nok)}` : ""}${paused}`)
       if (reqs.length) console.log(`      ønsker: ${formatRequirements(reqs)}`)
       console.log(`      ${s.url}`)
     }
@@ -513,6 +552,8 @@ const USAGE = `bazaar — finn.no deal hunter
   search add "<name>" "<url>" [budget] [--want="skinn!, hengerfeste"]
                                        watch a saved search; ! marks a must-have
   search list                          show configured searches
+  search remove <id>                   delete a search (keeps its listings)
+  search pause|resume <id>             stop or restart sweeping one
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
   serve [--port=N] [--host=H]          web UI for phone and desktop

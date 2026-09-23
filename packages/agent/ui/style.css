@@ -136,6 +136,27 @@ main { padding: var(--gutter); max-width: 900px; margin: 0 auto; }
 .ghost { background: none; border: 0; color: var(--text-muted); font: inherit; cursor: pointer; padding: 4px; text-align: left; }
 .count { color: var(--text-muted); font-size: 12px; margin: 10px 2px 0; }
 
+/* Horizontal scroll rather than wrapping: with several hunts a wrapped row
+   pushes the feed off the first screen. */
+.searchchips { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; padding-bottom: 2px; }
+.searchchips::-webkit-scrollbar { display: none; }
+.searchchips button {
+  white-space: nowrap; flex-shrink: 0; cursor: pointer; font: inherit; font-size: 13px;
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+}
+.searchchips button.on { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+
+.rowbtns { display: flex; gap: 8px; margin-top: 12px; }
+.ghostbtn {
+  font: inherit; font-size: 13px; cursor: pointer; padding: 8px 12px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--surface-0); color: var(--text-secondary);
+}
+.ghostbtn:hover { border-color: var(--text-muted); }
+.ghostbtn.danger { color: var(--bad); }
+.ghostbtn.danger:hover { border-color: var(--bad); }
+.section.paused { opacity: .6; }
+
 /* ---- deal cards ---- */
 
 .cards { display: grid; gap: 12px; }

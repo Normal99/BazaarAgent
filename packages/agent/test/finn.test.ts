@@ -1,7 +1,7 @@
 import { expect, test, describe } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { parseSearchPage, normalizeSearchUrl, extractSearchState, ParseError } from "../src/finn/search.ts"
+import { parseSearchPage, normalizeSearchUrl, extractSearchState, checkFilters, ParseError } from "../src/finn/search.ts"
 import { parseItemPage, parseSpecFields, parseNorwegianNumber, imageVariant } from "../src/finn/item.ts"
 
 // The fixtures are real finn.no responses captured on 2026-09-23, trimmed to a
@@ -113,5 +113,58 @@ describe("image variants", () => {
     expect(imageVariant(original, "1280w")).toContain("/dynamic/1280w/item/")
     // Already-sized URLs are rewritten too, not doubled up.
     expect(imageVariant(imageVariant(original, "1600w"), "640w")).toContain("/dynamic/640w/item/")
+  })
+})
+
+describe("detecting filters finn silently dropped", () => {
+  const page = (selected: string[][], matchCount: number) => {
+    const blob = Buffer.from(
+      JSON.stringify({
+        queries: [
+          {
+            queryKey: [{ scope: "search" }],
+            state: {
+              data: {
+                docs: [],
+                metadata: {
+                  result_size: { match_count: matchCount },
+                  selected_filters: selected.map((names) => ({ parameters: names.map((n) => ({ parameter_name: n })) })),
+                },
+              },
+            },
+          },
+        ],
+      }),
+    ).toString("base64")
+    return `<script type="application/json" data-react-query-state>${blob}</script>`
+  }
+
+  test("reports a parameter finn ignored", () => {
+    // Live: ?make=0.817&model=1.817.1621&price_to=250000 came back with only
+    // the price applied and 38 394 matches — nearly the whole market — while
+    // looking like a properly configured Tiguan search.
+    const url = new URL("https://www.finn.no/mobility/search/car?make=0.817&model=1.817.1621&price_to=250000")
+    const check = checkFilters(page([["price_to"]], 38_394), url)
+    expect(check.ignored.sort()).toEqual(["make", "model"])
+    expect(check.matchCount).toBe(38_394)
+  })
+
+  test("make is honoured but echoed back as variant, and is not a false alarm", () => {
+    const url = new URL("https://www.finn.no/mobility/search/car?make=0.817&price_to=200000")
+    expect(checkFilters(page([["variant"], ["price_to"]], 4_691), url).ignored).toEqual([])
+  })
+
+  test("a fully honoured search reports nothing", () => {
+    const url = new URL("https://www.finn.no/mobility/search/car?variant=1.817.2834&price_to=250000")
+    expect(checkFilters(page([["variant"], ["price_to"]], 304), url).ignored).toEqual([])
+  })
+
+  test("sort and paging are not filters and are never reported", () => {
+    const url = new URL("https://www.finn.no/mobility/search/car?price_to=120000&sort=PUBLISHED_DESC&page=2")
+    expect(checkFilters(page([["price_to"]], 100), url).ignored).toEqual([])
+  })
+
+  test("a search with no filters at all is not an error", () => {
+    expect(checkFilters(page([], 50_000), new URL("https://www.finn.no/mobility/search/car")).ignored).toEqual([])
   })
 })

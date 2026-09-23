@@ -363,6 +363,46 @@ export class Store {
     return [...seen.values()]
   }
 
+  /**
+   * Remove a search entirely.
+   *
+   * The listings it found are kept: they are market data, and throwing away
+   * comparables because you renamed a hunt would quietly degrade every
+   * valuation. Only the link rows go, so the search's requirements stop being
+   * applied to the cars it happened to turn up.
+   */
+  deleteSearch(id: number): boolean {
+    const removed = this.db.transaction(() => {
+      this.db.query("DELETE FROM listing_searches WHERE search_id = ?").run(id)
+      return this.db.query("DELETE FROM searches WHERE id = ?").run(id).changes > 0
+    })()
+    return removed
+  }
+
+  /** Stop or resume sweeping a search without losing how it was set up. */
+  setSearchActive(id: number, active: boolean): boolean {
+    return this.db.query("UPDATE searches SET active = ? WHERE id = ?").run(active ? 1 : 0, id).changes > 0
+  }
+
+  getSearch(id: number): SearchRow | null {
+    return this.db
+      .query<SearchRow, [number]>(
+        "SELECT id, name, url, budget_nok, min_score, last_swept, requirements_json FROM searches WHERE id = ?",
+      )
+      .get(id)
+  }
+
+  /** Which searches turned up each listing, for filtering a mixed feed. */
+  searchIdsByListing(): Map<number, number[]> {
+    const map = new Map<number, number[]>()
+    for (const row of this.db.query<{ ad_id: number; search_id: number }, []>("SELECT ad_id, search_id FROM listing_searches").all()) {
+      const existing = map.get(row.ad_id)
+      if (existing) existing.push(row.search_id)
+      else map.set(row.ad_id, [row.search_id])
+    }
+    return map
+  }
+
   markSwept(searchId: number): void {
     this.db.query("UPDATE searches SET last_swept = ? WHERE id = ?").run(Date.now(), searchId)
   }
