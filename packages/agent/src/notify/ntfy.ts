@@ -45,13 +45,26 @@ export interface Notification {
   readonly click?: string
 }
 
+/**
+ * Make a header value safe to send.
+ *
+ * HTTP headers are ASCII, and Norwegian titles are not — model names, place
+ * names and the "·" separator all break it. percent-encoding looked plausible
+ * and was wrong: ntfy has no X-Title-Encoding header, so a phone displayed the
+ * literal "119%C2%A0900%20kr%20%C2%B7%20Audi". RFC 2047 encoded-words are what
+ * ntfy actually decodes. Pure-ASCII titles are sent untouched so the common
+ * case stays readable in logs.
+ */
+export function encodeHeader(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7e]*$/.test(value)) return value
+  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`
+}
+
 export async function send(notification: Notification, config = loadNtfyConfig()): Promise<boolean> {
   if (!config) return false
   const headers: Record<string, string> = {
-    // Non-ASCII has to be encoded: ntfy reads these as HTTP header values, and
-    // Norwegian model names and place names are full of æ, ø and å.
-    Title: encodeURIComponent(notification.title),
-    "X-Title-Encoding": "url",
+    Title: encodeHeader(notification.title),
     Priority: String(notification.priority ?? 3),
   }
   if (notification.tags?.length) headers.Tags = notification.tags.join(",")

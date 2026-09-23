@@ -383,14 +383,29 @@ async function notifyCmd(args: string[]): Promise<void> {
   // Send anything scoring high enough that has not already been sent.
   const store = new Store()
   const searches = store.listSearches()
-  const minScore = Math.min(...searches.map((s) => s.min_score), 6)
+  const minScore = Number(args.find((a) => a.startsWith("--min="))?.split("=")[1] ?? Math.min(...searches.map((s) => s.min_score), 6))
+  // A cap, because the first run after setup always faces a backlog — 30 deals
+  // had accumulated here — and thirty notifications at once is not an alert,
+  // it is noise you will mute. The best few go now, the rest next tick.
+  const max = Number(args.find((a) => a.startsWith("--max="))?.split("=")[1] ?? 5)
   const budget = searches.find((s) => s.budget_nok)?.budget_nok ?? undefined
   let sent = 0
   let failed = 0
-  for (const row of store.topDeals(30, minScore)) {
+
+  const pending = store.topDeals(60, minScore).filter((row) => !store.wasNotified(row.ad_id, "deal"))
+
+  // Clear a backlog without sending it: useful right after configuring a
+  // channel, when everything already in the feed is old news.
+  if (args.includes("--catch-up")) {
+    for (const row of pending) store.markNotified(row.ad_id, "deal")
+    console.log(`Marked ${pending.length} existing deals as seen. Only new ones will alert from now on.`)
+    store.close()
+    return
+  }
+
+  for (const row of pending.slice(0, max)) {
     const listing = store.listing(row.ad_id)
     if (!listing) continue
-    if (store.wasNotified(row.ad_id, "deal")) continue // already told them
     const ok = await send(
       dealNotification(
         {
@@ -414,7 +429,12 @@ async function notifyCmd(args: string[]): Promise<void> {
       failed++
     }
   }
-  console.log(`${sent} notification${sent === 1 ? "" : "s"} sent.${failed ? ` ${failed} failed and will be retried — is ntfy configured?` : ""}`)
+  const remaining = Math.max(0, pending.length - max)
+  console.log(
+    `${sent} notification${sent === 1 ? "" : "s"} sent.` +
+      (failed ? ` ${failed} failed and will be retried — is ntfy configured?` : "") +
+      (remaining ? ` ${remaining} more queued (capped at ${max} per run; --catch-up to clear without sending).` : ""),
+  )
   store.close()
 }
 
@@ -456,6 +476,8 @@ const USAGE = `bazaar — finn.no deal hunter
   deals [--min=N]                      show the ranked feed
   plan <ad_id>                         full haggle plan for one car
   notify setup | test                  configure ntfy, or send a test
+  notify [--max=N] [--min=S] [--catch-up]
+                                       push new deals; cap per run, or clear the backlog
   notify                               push anything new above the threshold
 
   vision-probe <ad_id>                 compare both providers on one ad's photos
