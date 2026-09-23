@@ -50,7 +50,13 @@ export const SearchEntrySchema = z
     labels: z.array(z.object({ id: z.string().optional(), text: z.string().optional() })).optional(),
     flags: z.array(z.string()).optional(),
     image_urls: z.array(z.string()).optional(),
+    /**
+     * Together these say what KIND of ad this is, and their price fields mean
+     * different things: ad_type 200 / sales_form 5 is a monthly lease payment,
+     * sales_form 7 an auction starting bid. See finn/listing-type.ts.
+     */
     sales_form: z.number().optional(),
+    ad_type: z.number().optional(),
   })
   // finn adds fields regularly; unknown ones are kept in raw_json, not rejected.
   .loose()

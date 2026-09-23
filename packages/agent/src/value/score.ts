@@ -29,6 +29,8 @@ export interface ScoreInput {
   readonly requirementDelta?: number
   /** From distancePenalty(). Undefined when no home is configured. */
   readonly distance?: { delta: number; label: string }
+  /** True for an auction, where the price is a starting bid rather than an asking price. */
+  readonly isAuction?: boolean
   readonly now?: number
 }
 
@@ -166,6 +168,15 @@ export function scoreListing(input: ScoreInput): ScoreBreakdown {
     const delta = -Math.min(6, 2 + excess * 6)
     parts.push({ label: `${(input.residualPct * 100).toFixed(0)}% under marked — for godt til å stemme`, delta })
     score += delta
+  }
+
+  // An auction price is a starting bid, so the residual against market
+  // systematically overstates the deal — the car will sell for more, possibly
+  // much more. These stay in the feed, because an auction is a real way to buy
+  // a car, but they must not outrank a fixed price on a number that is not one.
+  if (input.isAuction) {
+    parts.push({ label: "auksjon — prisen er startbud", delta: -1.5 })
+    score -= 1.5
   }
 
   // Mileage against what is normal for the age. Norwegian average is roughly

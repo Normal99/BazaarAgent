@@ -26,10 +26,12 @@ function fakeClient(byId: Record<number, "live" | 404 | "error">) {
   }
 }
 
+// listing_type matters: a row without one is not a comparable, which is
+// correct behaviour but would make these tests measure the wrong thing.
 const insert = (store: Store, adId: number, lastSeenDaysAgo: number) =>
   store.db
-    .query(`INSERT INTO listings (ad_id, heading, url, price, first_seen, last_seen, raw_json)
-            VALUES (?,?,?,?,?,?,'{}')`)
+    .query(`INSERT INTO listings (ad_id, heading, url, price, first_seen, last_seen, raw_json, listing_type)
+            VALUES (?,?,?,?,?,?,'{}','sale')`)
     .run(adId, `Bil ${adId}`, `https://www.finn.no/mobility/item/${adId}`, 100000, 0, Date.now() - lastSeenDaysAgo * 86_400_000)
 
 const delistedAt = (store: Store, adId: number) =>

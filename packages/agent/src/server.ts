@@ -104,6 +104,7 @@ function deals(store: Store, url: URL) {
         compCount: row.comp_count,
         score: row.score,
         confidence: model.confidence ?? null,
+        listingType: row.listing_type,
         requirements: (model.requirements ?? []) as RequirementMatch[],
         missingRequired: ((model.requirements ?? []) as RequirementMatch[]).filter((r) => r.required && r.status === "nei").length,
         disqualified: model.disqualified ?? null,

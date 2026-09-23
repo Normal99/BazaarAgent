@@ -6,6 +6,7 @@ import type { SearchEntry } from "./finn/types.ts"
 import type { ItemSpecs } from "./finn/item.ts"
 import type { CallRecord } from "llm-brain"
 import type { Requirement } from "./value/requirements.ts"
+import { classifyListing, isMarketEvidence, type ListingType } from "./finn/listing-type.ts"
 
 // SQLite because the whole point is a local-first agent that survives a reboot
 // and can be inspected with a shell. WAL so a sweep writing does not block the
@@ -206,6 +207,7 @@ export interface ListingRow {
   readonly image_urls: string | null
   readonly regno: string | null
   readonly vin: string | null
+  readonly listing_type: string | null
 }
 
 export interface DealRow {
@@ -217,6 +219,7 @@ export interface DealRow {
   readonly price: number
   readonly dealer_segment: string | null
   readonly location: string | null
+  readonly listing_type: string | null
   readonly fair_value: number | null
   readonly residual_pct: number | null
   readonly comp_count: number
@@ -261,8 +264,30 @@ export class Store {
     }
 
     add("searches", "requirements_json", "TEXT")
+    add("listings", "listing_type", "TEXT")
     this.db.exec(`CREATE TABLE IF NOT EXISTS listing_searches (
       ad_id INTEGER NOT NULL, search_id INTEGER NOT NULL, PRIMARY KEY (ad_id, search_id))`)
+
+    // Backfill from the payload already stored, so an existing database stops
+    // valuing lease payments as purchase prices without needing a re-sweep.
+    const unclassified = this.db.query<{ ad_id: number; raw_json: string }, []>(
+      "SELECT ad_id, raw_json FROM listings WHERE listing_type IS NULL",
+    ).all()
+    if (unclassified.length > 0) {
+      const set = this.db.query("UPDATE listings SET listing_type = ? WHERE ad_id = ?")
+      this.db.transaction(() => {
+        for (const row of unclassified) {
+          let type: ListingType = "other"
+          try {
+            type = classifyListing(JSON.parse(row.raw_json))
+          } catch {
+            // A row we cannot parse stays "other" and is kept out of the comps.
+          }
+          set.run(type, row.ad_id)
+        }
+      })()
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS listings_type ON listings(listing_type)")
     add("analyses", "requirements_json", "TEXT")
   }
 
@@ -345,20 +370,24 @@ export class Store {
     const existing = this.db.query<{ ad_id: number; price: number; vin: string | null }, [number]>(
       "SELECT ad_id, price, vin FROM listings WHERE ad_id = ?",
     )
-    const byVin = this.db.query<{ ad_id: number; price: number; first_seen: number }, [string, number]>(
+    // Same listing_type on both sides: the same VIN very often appears once
+    // for sale and once to lease, which is one car advertised two ways rather
+    // than a car that failed to sell. Comparing across types reported those as
+    // relists and invented a price drop from 288 000 kr to 3 789 kr.
+    const byVin = this.db.query<{ ad_id: number; price: number; first_seen: number }, [string, string, number]>(
       `SELECT ad_id, price, first_seen FROM listings
-       WHERE vin = ? AND ad_id != ? ORDER BY last_seen DESC LIMIT 1`,
+       WHERE vin = ? AND listing_type = ? AND ad_id != ? ORDER BY last_seen DESC LIMIT 1`,
     )
 
     const upsert = this.db.query(
       `INSERT INTO listings (
          ad_id, vin, regno, heading, url, make, model, series, spec, year, mileage, price,
          fuel, transmission, dealer_segment, org_id, org_name, location, lat, lon,
-         registration_class, published_at, first_seen, last_seen, image_urls, raw_json
+         registration_class, published_at, first_seen, last_seen, image_urls, raw_json, listing_type
        ) VALUES (
          $ad_id, $vin, $regno, $heading, $url, $make, $model, $series, $spec, $year, $mileage, $price,
          $fuel, $transmission, $dealer_segment, $org_id, $org_name, $location, $lat, $lon,
-         $registration_class, $published_at, $now, $now, $image_urls, $raw_json
+         $registration_class, $published_at, $now, $now, $image_urls, $raw_json, $listing_type
        )
        ON CONFLICT(ad_id) DO UPDATE SET
          price = excluded.price, mileage = excluded.mileage, last_seen = excluded.last_seen,
@@ -380,7 +409,7 @@ export class Store {
         if (!previous) {
           // A VIN we have seen under a different ad id means the seller relisted
           // rather than sold — invisible on finn, and the strongest leverage there is.
-          const prior = entry.chassis_number ? byVin.get(entry.chassis_number, entry.ad_id) : undefined
+          const prior = entry.chassis_number ? byVin.get(entry.chassis_number, classifyListing(entry), entry.ad_id) : undefined
           if (prior) {
             changes.push({
               kind: "relisted",
@@ -422,6 +451,7 @@ export class Store {
           $now: now,
           $image_urls: JSON.stringify(entry.image_urls ?? []),
           $raw_json: JSON.stringify(entry),
+          $listing_type: classifyListing(entry),
         })
         if (priceIsNews) addPrice.run(entry.ad_id, now, price)
         if (searchId !== undefined) link.run(entry.ad_id, searchId)
@@ -524,7 +554,18 @@ export class Store {
     /** Exclude the car being valued. */
     excludeAdId?: number
   }): CompRow[] {
-    const where: string[] = ["make = ?", "year BETWEEN ? AND ?", "mileage IS NOT NULL", "year IS NOT NULL", "price > 0", "delisted_at IS NULL"]
+    const where: string[] = [
+      "make = ?",
+      "year BETWEEN ? AND ?",
+      "mileage IS NOT NULL",
+      "year IS NOT NULL",
+      "price > 0",
+      "delisted_at IS NULL",
+      // Only an actual asking price is evidence of what the market pays. A
+      // monthly lease payment and an auction starting bid are both numbers in
+      // the same column meaning something else entirely.
+      "listing_type = 'sale'",
+    ]
     const params: Array<string | number> = [filter.make, filter.yearFrom, filter.yearTo]
 
     if (filter.model) {
@@ -602,9 +643,10 @@ export class Store {
     return this.db
       .query<ListingRow, [number]>(
         `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
-                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin
+                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin, listing_type
          FROM listings
          WHERE delisted_at IS NULL AND year IS NOT NULL AND mileage IS NOT NULL AND price > 0
+           AND listing_type IN ('sale', 'auction')
          ORDER BY first_seen DESC LIMIT ?`,
       )
       .all(limit)
@@ -614,7 +656,7 @@ export class Store {
     return this.db
       .query<ListingRow, [number]>(
         `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
-                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin
+                dealer_segment, location, lat, lon, published_at, image_urls, regno, vin, listing_type
          FROM listings WHERE ad_id = ?`,
       )
       .get(adId)
@@ -631,12 +673,13 @@ export class Store {
     return this.db
       .query<DealRow, [number, number]>(
         `SELECT l.ad_id, l.heading, l.url, l.year, l.mileage, l.price, l.dealer_segment, l.location,
+                l.listing_type,
                 v.fair_value, v.residual_pct, v.comp_count, v.score, v.model_json,
                 a.summary, a.levers_json, a.flags_json, a.provider
          FROM listings l
          JOIN valuations v ON v.ad_id = l.ad_id
          LEFT JOIN analyses a ON a.ad_id = l.ad_id
-         WHERE l.delisted_at IS NULL AND v.score >= ?
+         WHERE l.delisted_at IS NULL AND v.score >= ? AND l.listing_type IN ('sale', 'auction')
          ORDER BY v.score DESC LIMIT ?`,
       )
       .all(minScore, limit)

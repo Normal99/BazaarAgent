@@ -13,7 +13,15 @@ beforeEach(() => {
 })
 
 /** A real finn entry with specific fields overridden. */
-const entry = (over: Partial<SearchEntry> = {}): SearchEntry => ({ ...structuredClone(realEntries[0]!), ...over })
+// The captured fixture is an AUCTION (sales_form 7), so helpers say plainly
+// that they mean an ordinary sale — otherwise every one of these would be
+// excluded from the comparables, correctly but confusingly.
+const entry = (over: Partial<SearchEntry> = {}): SearchEntry => ({
+  ...structuredClone(realEntries[0]!),
+  ad_type: 20,
+  sales_form: 1,
+  ...over,
+})
 
 describe("ingest", () => {
   test("reports every listing as new the first time", () => {

@@ -96,6 +96,9 @@ function card(d) {
     const met = d.requirements.filter((r) => r.status === "ja").length
     if (met > 0) badges.push(`<span class="badge under">${met}/${d.requirements.length} ønsker ✓</span>`)
   }
+  // A starting bid is not an asking price; the badge stops the number reading
+  // as a bargain it may not be.
+  if (d.listingType === "auction") badges.push('<span class="badge low">auksjon — startbud</span>')
   if (d.confidence === "low") badges.push('<span class="badge low">usikkert anslag</span>')
 
   return `<button class="card" data-id="${d.adId}">

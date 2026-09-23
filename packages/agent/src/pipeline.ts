@@ -85,6 +85,7 @@ export function valueAll(options: PipelineOptions): { valued: number; skipped: n
       publishedAt: listing.published_at,
       priceDrops: Math.max(0, history.length - 1),
       distance: distanceFor(home, listing),
+      isAuction: listing.listing_type === "auction",
     })
 
     store.saveValuation(listing.ad_id, {
@@ -295,6 +296,7 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
       registryFindings: registryFindings.length,
       requirementDelta: summarise(matches).scoreDelta,
       distance: distanceFor(loadHome(), listing),
+      isAuction: listing.listing_type === "auction",
     })
     store.saveValuation(listing.ad_id, {
       fairValue: candidate.valuation.fairValue,

@@ -13,8 +13,11 @@ beforeEach(() => {
   store = new Store(":memory:")
 })
 
+// The fixture is an auction; these are ordinary sales.
 const car = (over: Partial<SearchEntry> & { ad_id: number }): SearchEntry => ({
   ...structuredClone(realEntry),
+  ad_type: 20,
+  sales_form: 1,
   make: "Volkswagen",
   series: "Golf-Serie",
   model: "Golf VII",
