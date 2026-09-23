@@ -79,12 +79,17 @@ CREATE TABLE IF NOT EXISTS vegvesen (
   data_json  TEXT NOT NULL
 );
 
+-- Deliberately not keyed on (ad_id, observed_at): two price observations can
+-- land in the same millisecond, and a composite key silently discards the
+-- second one. Rows are only written when the price actually changes, so there
+-- is nothing to deduplicate and a surrogate key is the honest choice.
 CREATE TABLE IF NOT EXISTS price_history (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
   ad_id       INTEGER NOT NULL REFERENCES listings(ad_id),
   observed_at INTEGER NOT NULL,
-  price       INTEGER NOT NULL,
-  PRIMARY KEY (ad_id, observed_at)
+  price       INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS price_history_ad ON price_history(ad_id, observed_at);
 
 CREATE TABLE IF NOT EXISTS valuations (
   ad_id        INTEGER PRIMARY KEY REFERENCES listings(ad_id),
@@ -233,12 +238,17 @@ export class Store {
          price = excluded.price, mileage = excluded.mileage, last_seen = excluded.last_seen,
          heading = excluded.heading, raw_json = excluded.raw_json, delisted_at = NULL`,
     )
-    const addPrice = this.db.query("INSERT OR IGNORE INTO price_history (ad_id, observed_at, price) VALUES (?, ?, ?)")
+    const addPrice = this.db.query("INSERT INTO price_history (ad_id, observed_at, price) VALUES (?, ?, ?)")
 
     const transaction = this.db.transaction((rows: readonly SearchEntry[]) => {
       for (const entry of rows) {
         const previous = existing.get(entry.ad_id)
         const price = entry.price.amount
+
+        // Only actual changes go into price_history. Writing a row per listing
+        // per sweep would grow without bound and, since sweeps minutes apart
+        // share a timestamp granularity, silently collide on the primary key.
+        const priceIsNews = !previous || previous.price !== price
 
         if (!previous) {
           // A VIN we have seen under a different ad id means the seller relisted
@@ -286,7 +296,7 @@ export class Store {
           $image_urls: JSON.stringify(entry.image_urls ?? []),
           $raw_json: JSON.stringify(entry),
         })
-        addPrice.run(entry.ad_id, now, price)
+        if (priceIsNews) addPrice.run(entry.ad_id, now, price)
       }
     })
 
@@ -352,7 +362,7 @@ export class Store {
   priceHistory(adId: number): Array<{ observed_at: number; price: number }> {
     return this.db
       .query<{ observed_at: number; price: number }, [number]>(
-        "SELECT observed_at, price FROM price_history WHERE ad_id = ? ORDER BY observed_at",
+        "SELECT observed_at, price FROM price_history WHERE ad_id = ? ORDER BY observed_at, id",
       )
       .all(adId)
   }
