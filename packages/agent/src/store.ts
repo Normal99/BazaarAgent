@@ -154,6 +154,46 @@ export interface CompRow {
   readonly series: string | null
 }
 
+export interface ListingRow {
+  readonly ad_id: number
+  readonly heading: string
+  readonly url: string
+  readonly make: string | null
+  readonly model: string | null
+  readonly series: string | null
+  readonly year: number
+  readonly mileage: number
+  readonly price: number
+  readonly fuel: string | null
+  readonly transmission: string | null
+  readonly dealer_segment: string | null
+  readonly location: string | null
+  readonly published_at: number | null
+  readonly image_urls: string | null
+  readonly regno: string | null
+  readonly vin: string | null
+}
+
+export interface DealRow {
+  readonly ad_id: number
+  readonly heading: string
+  readonly url: string
+  readonly year: number | null
+  readonly mileage: number | null
+  readonly price: number
+  readonly dealer_segment: string | null
+  readonly location: string | null
+  readonly fair_value: number | null
+  readonly residual_pct: number | null
+  readonly comp_count: number
+  readonly score: number | null
+  readonly model_json: string | null
+  readonly summary: string | null
+  readonly levers_json: string | null
+  readonly flags_json: string | null
+  readonly provider: string | null
+}
+
 export interface SweepResult {
   readonly seen: number
   readonly changes: Change[]
@@ -425,6 +465,96 @@ export class Store {
          FROM listings WHERE ${where.join(" AND ")} ORDER BY year DESC`,
       )
       .all(...params)
+  }
+
+  // -------------------------------------------------------------------------
+  // Valuations and analyses
+  // -------------------------------------------------------------------------
+
+  saveValuation(adId: number, v: { fairValue: number; residualPct: number; compCount: number; score: number; model: unknown }): void {
+    this.db
+      .query(
+        `INSERT INTO valuations (ad_id, computed_at, fair_value, residual_pct, comp_count, score, model_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ad_id) DO UPDATE SET computed_at=excluded.computed_at, fair_value=excluded.fair_value,
+           residual_pct=excluded.residual_pct, comp_count=excluded.comp_count, score=excluded.score, model_json=excluded.model_json`,
+      )
+      .run(adId, Date.now(), Math.round(v.fairValue), v.residualPct, v.compCount, v.score, JSON.stringify(v.model))
+  }
+
+  saveAnalysis(adId: number, a: { flags: unknown; levers: unknown; odometerSeenKm?: number | null; imagesUsed: string[]; summary: string; provider: string }): void {
+    this.db
+      .query(
+        `INSERT INTO analyses (ad_id, flags_json, levers_json, odometer_seen_km, images_used_json, summary, provider, computed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ad_id) DO UPDATE SET flags_json=excluded.flags_json, levers_json=excluded.levers_json,
+           odometer_seen_km=excluded.odometer_seen_km, images_used_json=excluded.images_used_json,
+           summary=excluded.summary, provider=excluded.provider, computed_at=excluded.computed_at`,
+      )
+      .run(
+        adId,
+        JSON.stringify(a.flags),
+        JSON.stringify(a.levers),
+        a.odometerSeenKm ?? null,
+        JSON.stringify(a.imagesUsed),
+        a.summary,
+        a.provider,
+        Date.now(),
+      )
+  }
+
+  hasAnalysis(adId: number): boolean {
+    return this.db.query("SELECT 1 FROM analyses WHERE ad_id = ?").get(adId) !== null
+  }
+
+  /** Live listings with everything needed to value them, newest first. */
+  valuationCandidates(limit = 500): ListingRow[] {
+    return this.db
+      .query<ListingRow, [number]>(
+        `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
+                dealer_segment, location, published_at, image_urls, regno, vin
+         FROM listings
+         WHERE delisted_at IS NULL AND year IS NOT NULL AND mileage IS NOT NULL AND price > 0
+         ORDER BY first_seen DESC LIMIT ?`,
+      )
+      .all(limit)
+  }
+
+  listing(adId: number): ListingRow | null {
+    return this.db
+      .query<ListingRow, [number]>(
+        `SELECT ad_id, heading, url, make, model, series, year, mileage, price, fuel, transmission,
+                dealer_segment, location, published_at, image_urls, regno, vin
+         FROM listings WHERE ad_id = ?`,
+      )
+      .get(adId)
+  }
+
+  specs(adId: number): { description: string | null; equipment_json: string | null; fields_json: string | null; eu_control_due: string | null; price_excl_reg: number | null } | null {
+    return this.db
+      .query<any, [number]>("SELECT description, equipment_json, fields_json, eu_control_due, price_excl_reg FROM specs WHERE ad_id = ?")
+      .get(adId)
+  }
+
+  /** Scored listings worth looking at, best first. */
+  topDeals(limit = 20, minScore = 0): DealRow[] {
+    return this.db
+      .query<DealRow, [number, number]>(
+        `SELECT l.ad_id, l.heading, l.url, l.year, l.mileage, l.price, l.dealer_segment, l.location,
+                v.fair_value, v.residual_pct, v.comp_count, v.score, v.model_json,
+                a.summary, a.levers_json, a.flags_json, a.provider
+         FROM listings l
+         JOIN valuations v ON v.ad_id = l.ad_id
+         LEFT JOIN analyses a ON a.ad_id = l.ad_id
+         WHERE l.delisted_at IS NULL AND v.score >= ?
+         ORDER BY v.score DESC LIMIT ?`,
+      )
+      .all(minScore, limit)
+  }
+
+  markNotified(adId: number, reason: string): boolean {
+    const changes = this.db.query("INSERT OR IGNORE INTO notified (ad_id, reason, sent_at) VALUES (?, ?, ?)").run(adId, reason, Date.now())
+    return changes.changes > 0
   }
 
   // -------------------------------------------------------------------------

@@ -9,6 +9,10 @@ import { analyzeListing } from "./llm/analyze.ts"
 import { selectImages } from "./llm/images.ts"
 import { isConfigured as vegvesenConfigured, saveAuth as saveVegvesenAuth, lookup as vegvesenLookup, mapVehicle, crossCheck } from "./vegvesen.ts"
 import { stateDir } from "./paths.ts"
+import { valueAll, enrichTop, type ScoredListing } from "./pipeline.ts"
+import { buildHagglePlan } from "./value/haggle.ts"
+import { saveNtfyConfig, send, dealNotification } from "./notify/ntfy.ts"
+import { buildCorpus } from "./corpus.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
 
@@ -209,6 +213,152 @@ async function vv(args: string[]): Promise<void> {
   for (const note of notes) console.log(`  ⚠ ${note}`)
 }
 
+async function corpus(args: string[]): Promise<void> {
+  const pages = Number(args.find((a) => a.startsWith("--pages="))?.split("=")[1] ?? 3)
+  const models = Number(args.find((a) => a.startsWith("--models="))?.split("=")[1] ?? 8)
+  const store = new Store()
+  const result = await buildCorpus({ store, pagesPerModel: pages, maxModels: models, onProgress: (l) => console.log(l) })
+  console.log(`\nFetched ${result.swept} listings across ${result.models} model groups.`)
+  store.close()
+}
+
+async function score(args: string[]): Promise<void> {
+  const noLlm = args.includes("--no-llm")
+  const limit = Number(args.find((a) => a.startsWith("--max="))?.split("=")[1] ?? 10)
+  const store = new Store()
+  const budget = store.listSearches().find((s) => s.budget_nok)?.budget_nok ?? undefined
+
+  const { valued, skipped, results } = valueAll({ store, budget: budget ?? undefined })
+  console.log(`Valued ${valued} listings (${skipped} skipped — too few comparables).`)
+
+  const enriched = await enrichTop(results, {
+    store,
+    budget: budget ?? undefined,
+    noLlm,
+    maxAnalyses: limit,
+    onProgress: (line) => console.log(line),
+  })
+
+  console.log(`\nTop ${Math.min(enriched.length, 10)}:`)
+  for (const deal of enriched.slice(0, 10)) printDeal(deal)
+  store.close()
+}
+
+function printDeal(deal: ScoredListing): void {
+  const { listing, valuation, plan, score } = deal
+  const under = valuation.residualPct > 0 ? `${(valuation.residualPct * 100).toFixed(0)}% under` : `${(-valuation.residualPct * 100).toFixed(0)}% over`
+  console.log(`\n  [${score.toFixed(1)}] ${listing.heading} ${listing.year} · ${listing.mileage.toLocaleString("nb-NO")} km`)
+  console.log(`        ${kr(listing.price)} · ${under} marked (est. ${kr(valuation.fairValue)}, ${valuation.selection.comps.length} comps, ${valuation.confidence})`)
+  console.log(`        ${listing.dealer_segment ?? "?"} · ${listing.location ?? "?"} · ${listing.url}`)
+  if (plan?.haggleableIntoBudget) console.log(`        💬 ${kr(plan.overBudgetBy!)} over budsjett — forhandlebart ned til ${kr(plan.target)}`)
+  else if (plan && plan.target < listing.price) console.log(`        💬 mål ${kr(plan.target)} · gå fra ved ${kr(plan.walkAway)}`)
+  for (const finding of deal.registryFindings) console.log(`        ⚠ ${finding}`)
+  if (deal.analysis) {
+    for (const flag of deal.analysis.redFlags.slice(0, 3)) console.log(`        · ${flag.claim}`)
+  }
+}
+
+async function deals(args: string[]): Promise<void> {
+  const minScore = Number(args.find((a) => a.startsWith("--min="))?.split("=")[1] ?? 0)
+  const store = new Store()
+  const rows = store.topDeals(20, minScore)
+  if (rows.length === 0) {
+    console.log("Nothing scored yet. Run `./bazaar score`.")
+    store.close()
+    return
+  }
+  for (const r of rows) {
+    const under = r.residual_pct !== null ? `${(r.residual_pct * 100).toFixed(0)}%` : "?"
+    console.log(`[${(r.score ?? 0).toFixed(1)}] ${kr(r.price).padStart(12)}  ${under.padStart(5)} under  ${String(r.year ?? "").padEnd(5)} ${String(r.heading).slice(0, 34).padEnd(34)} ${r.url}`)
+  }
+  store.close()
+}
+
+async function plan(args: string[]): Promise<void> {
+  const adId = Number(args[0])
+  if (!Number.isFinite(adId)) throw new Error("Usage: ./bazaar plan <ad_id>")
+  const store = new Store()
+  const row = store.topDeals(500).find((d) => d.ad_id === adId)
+  if (!row) throw new Error(`Ad ${adId} has not been scored. Run \`./bazaar score\` first.`)
+
+  const listing = store.listing(adId)!
+  const specs = store.specs(adId)
+  const levers = row.levers_json ? JSON.parse(row.levers_json) : []
+  const budget = store.listSearches().find((s) => s.budget_nok)?.budget_nok ?? undefined
+  const history = store.priceHistory(adId)
+
+  const p = buildHagglePlan({
+    asking: listing.price,
+    priceExclRegistration: specs?.price_excl_reg ?? undefined,
+    fairValue: row.fair_value ?? listing.price,
+    confidence: (JSON.parse(row.model_json ?? "{}").confidence ?? "medium") as any,
+    levers: levers.map((l: any) => ({ claim: l.claim, evidence: l.evidence, estValueNok: l.estValueNok, source: "bilde" })),
+    budget: budget ?? undefined,
+    dealerSegment: listing.dealer_segment ?? undefined,
+    daysListed: listing.published_at ? Math.floor((Date.now() - listing.published_at) / 86_400_000) : undefined,
+    priceDrops: history.slice(0, -1).map((h) => h.price),
+  })
+
+  console.log(`${listing.heading} ${listing.year} · ${listing.mileage.toLocaleString("nb-NO")} km`)
+  console.log(listing.url)
+  console.log(`\n  Prisantydning   ${kr(p.asking).padStart(12)}`)
+  if (p.omregFee) console.log(`  Omregistrering  ${kr(p.omregFee).padStart(12)}\n  Totalt          ${kr(p.totalCost).padStart(12)}`)
+  console.log(`  Markedsverdi    ${kr(p.fairValue).padStart(12)}`)
+  console.log(`  Forsvarlig      ${kr(p.defensibleValue).padStart(12)}   (etter ${kr(p.leverTotal)} i funn)`)
+  console.log(`\n  MÅLPRIS         ${kr(p.target).padStart(12)}`)
+  console.log(`  Gå fra ved      ${kr(p.walkAway).padStart(12)}`)
+  if (p.budget) console.log(`  Budsjett        ${kr(p.budget).padStart(12)}${p.haggleableIntoBudget ? "   ✓ innen rekkevidde" : p.overBudgetBy ? "   ✗ for dyrt" : ""}`)
+  console.log("\n  Argumenter:")
+  for (const line of p.rationale) console.log(`    ${line}`)
+  if (row.summary) console.log(`\n  ${row.summary}`)
+  store.close()
+}
+
+async function notifyCmd(args: string[]): Promise<void> {
+  const [action] = args
+  if (action === "setup") {
+    const server = (await prompt("ntfy server [https://ntfy.sh]: ")) || "https://ntfy.sh"
+    const topic = await prompt("Topic (pick something unguessable, e.g. bazaar-a7f3k2): ")
+    if (!topic) throw new Error("A topic is required.")
+    const token = await prompt("Bearer token (blank for none): ")
+    saveNtfyConfig({ server, topic, token: token || undefined })
+    console.log(`✓ Saved. Subscribe to "${topic}" in the ntfy app on your phone and desktop.`)
+    return
+  }
+  if (action === "test") {
+    const ok = await send({ title: "BazaarAgent", body: "Varsler virker. 🚗", tags: ["white_check_mark"], priority: 3 })
+    console.log(ok ? "✓ Sent." : "✗ Failed — is ntfy configured? Run `./bazaar notify setup`.")
+    return
+  }
+
+  // Send anything scoring high enough that has not already been sent.
+  const store = new Store()
+  const searches = store.listSearches()
+  const minScore = Math.min(...searches.map((s) => s.min_score), 6)
+  const budget = searches.find((s) => s.budget_nok)?.budget_nok ?? undefined
+  let sent = 0
+  for (const row of store.topDeals(30, minScore)) {
+    const listing = store.listing(row.ad_id)
+    if (!listing) continue
+    if (!store.markNotified(row.ad_id, "deal")) continue // already told them
+    const ok = await send(
+      dealNotification(
+        {
+          listing,
+          valuation: { fairValue: row.fair_value ?? 0, residualPct: row.residual_pct ?? 0 } as any,
+          score: row.score ?? 0,
+          parts: [],
+          registryFindings: [],
+        },
+        budget ?? undefined,
+      ),
+    )
+    if (ok) sent++
+  }
+  console.log(`${sent} notification${sent === 1 ? "" : "s"} sent.`)
+  store.close()
+}
+
 async function llmStats(): Promise<void> {
   const store = new Store()
   const rows = store.llmStats()
@@ -238,6 +388,13 @@ const USAGE = `bazaar — finn.no deal hunter
   search list                          show configured searches
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
+  corpus [--pages=N] [--models=N]      deepen comparables for watched models
+  score [--no-llm] [--max=N]           value, enrich and rank everything swept
+  deals [--min=N]                      show the ranked feed
+  plan <ad_id>                         full haggle plan for one car
+  notify setup | test                  configure ntfy, or send a test
+  notify                               push anything new above the threshold
+
   vision-probe <ad_id>                 compare both providers on one ad's photos
   vv <regnr>                           look a plate up in the Vegvesen registry
   llm stats                            escalation rate per task and provider
@@ -251,6 +408,11 @@ try {
     case "sweep": await sweep(rest); break
     case "vision-probe": await visionProbe(rest); break
     case "vv": await vv(rest); break
+    case "corpus": await corpus(rest); break
+    case "score": await score(rest); break
+    case "deals": await deals(rest); break
+    case "plan": await plan(rest); break
+    case "notify": await notifyCmd(rest); break
     case "llm": await llmStats(); break
     default: console.log(USAGE)
   }
