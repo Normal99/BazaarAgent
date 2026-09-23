@@ -108,3 +108,41 @@ describe("odometer readings from photos", () => {
     expect(odometerDiscrepancy(100_000, undefined).material).toBe(false)
   })
 })
+
+describe("stripping claims built on a misread odometer", () => {
+  const { stripUnreliableOdometerClaims } = require("../src/value/score.ts")
+
+  test("removes the claim that quotes a number the dashboard does not show", () => {
+    // The live failure: dashboard 038783, model reported 39183, and the haggle
+    // plan told the user to raise "39 183 km" with the seller.
+    const levers = [
+      { claim: "Avklar kilometerstand", evidence: "instrumentbildet viser en tredje verdi på 39 183 km" },
+      { claim: "Be om servicehistorikk", evidence: "ingen kvitteringer i annonsen" },
+    ]
+    const kept = stripUnreliableOdometerClaims(levers, 39_183, 39_500)
+    expect(kept).toHaveLength(1)
+    expect(kept[0].claim).toBe("Be om servicehistorikk")
+  })
+
+  test("keeps the claim when the gap is too large to be a misreading", () => {
+    const levers = [{ claim: "Kilometerstand", evidence: "instrumentbildet viser 95 000 km" }]
+    expect(stripUnreliableOdometerClaims(levers, 95_000, 180_000)).toHaveLength(1)
+  })
+
+  test("keeps a text-versus-spec mismatch, which needs no photo to verify", () => {
+    const levers = [{ claim: "Sprik i km", evidence: "annonseteksten sier 38 800 km, tekniske data 39 500 km" }]
+    expect(stripUnreliableOdometerClaims(levers, 39_183, 39_500)).toHaveLength(1)
+  })
+
+  test("matches the number however it is spaced", () => {
+    for (const written of ["39183", "39 183", "39.183"]) {
+      const levers = [{ claim: "x", evidence: `instrumentbildet viser ${written} km` }]
+      expect(stripUnreliableOdometerClaims(levers, 39_183, 39_500)).toHaveLength(0)
+    }
+  })
+
+  test("does nothing when no reading was made", () => {
+    const levers = [{ claim: "x", evidence: "y" }]
+    expect(stripUnreliableOdometerClaims(levers, null, 39_500)).toHaveLength(1)
+  })
+})

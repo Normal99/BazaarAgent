@@ -1,0 +1,25 @@
+[Unit]
+Description=BazaarAgent — web UI for phone and desktop
+Documentation=https://github.com/Normal99/BazaarAgent
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/BazaarAgent
+ExecStart=%h/BazaarAgent/bazaar serve --port=3100
+Restart=on-failure
+RestartSec=5s
+
+# Bound to 0.0.0.0 so a phone on the tailnet can reach it. That is the whole
+# point of serving it at all, but it does mean anything that can route to this
+# machine can read the listing database — fine on a tailnet, not on a café
+# network. Pass --host=127.0.0.1 if that is not wanted.
+
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.bazaaragent
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

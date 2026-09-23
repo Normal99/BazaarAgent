@@ -1,0 +1,13 @@
+{
+  "name": "BazaarAgent",
+  "short_name": "Bazaar",
+  "description": "Gode bilkjøp på FINN",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

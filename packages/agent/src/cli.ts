@@ -13,6 +13,7 @@ import { valueAll, enrichTop, type ScoredListing } from "./pipeline.ts"
 import { buildHagglePlan } from "./value/haggle.ts"
 import { saveNtfyConfig, send, dealNotification } from "./notify/ntfy.ts"
 import { buildCorpus } from "./corpus.ts"
+import { startServer } from "./server.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
 
@@ -213,6 +214,14 @@ async function vv(args: string[]): Promise<void> {
   for (const note of notes) console.log(`  ⚠ ${note}`)
 }
 
+function serve(args: string[]): void {
+  const port = Number(args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? 3000)
+  const host = args.find((a) => a.startsWith("--host="))?.split("=")[1] ?? "0.0.0.0"
+  const { url } = startServer({ port, hostname: host })
+  console.log(`BazaarAgent on ${url}`)
+  console.log("From your phone: use this machine\u2019s Tailscale name, e.g. http://tfpc:" + port)
+}
+
 async function corpus(args: string[]): Promise<void> {
   const pages = Number(args.find((a) => a.startsWith("--pages="))?.split("=")[1] ?? 3)
   const models = Number(args.find((a) => a.startsWith("--models="))?.split("=")[1] ?? 8)
@@ -388,6 +397,7 @@ const USAGE = `bazaar — finn.no deal hunter
   search list                          show configured searches
   sweep [--pages=N] [--dry-run]        run one pass over every search
 
+  serve [--port=N] [--host=H]          web UI for phone and desktop
   corpus [--pages=N] [--models=N]      deepen comparables for watched models
   score [--no-llm] [--max=N]           value, enrich and rank everything swept
   deals [--min=N]                      show the ranked feed
@@ -408,6 +418,7 @@ try {
     case "sweep": await sweep(rest); break
     case "vision-probe": await visionProbe(rest); break
     case "vv": await vv(rest); break
+    case "serve": serve(rest); break
     case "corpus": await corpus(rest); break
     case "score": await score(rest); break
     case "deals": await deals(rest); break

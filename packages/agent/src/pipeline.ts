@@ -2,7 +2,7 @@ import { Store, type ListingRow } from "./store.ts"
 import { PoliteClient } from "./http.ts"
 import { parseItemPage } from "./finn/item.ts"
 import { valueListing, isFailure, type Valuation } from "./value/comps.ts"
-import { scoreListing, looksLikePartsCar, odometerDiscrepancy } from "./value/score.ts"
+import { scoreListing, looksLikePartsCar, odometerDiscrepancy, stripUnreliableOdometerClaims } from "./value/score.ts"
 import { buildHagglePlan, type HagglePlan, type Lever } from "./value/haggle.ts"
 import { analyzeListing, type Analysis } from "./llm/analyze.ts"
 import { providersFor } from "./llm/brain.ts"
@@ -227,9 +227,14 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
     // Photo odometer readings are not reliable to the digit, so a small gap is
     // dropped rather than presented as a discrepancy. Only a difference too
     // large to be a misread survives, and it survives as something to check.
+    //
+    // The same gate has to be applied to the model's own prose, not just to
+    // our generated note: it will quote the number it thought it read, and a
+    // negotiating point built on a misreading collapses in front of the car.
     if (analysis?.odometerSeenKm != null) {
       const check = odometerDiscrepancy(analysis.odometerSeenKm, listing.mileage)
       if (check.material) registryFindings.push(check.note!)
+      else levers = stripUnreliableOdometerClaims(levers, analysis.odometerSeenKm, listing.mileage)
     }
 
     const history = store.priceHistory(listing.ad_id)

@@ -1,0 +1,22 @@
+[Unit]
+Description=Sweep finn.no for car deals every 15 minutes
+Documentation=https://github.com/Normal99/BazaarAgent
+
+[Timer]
+# First run shortly after login rather than immediately, so a boot is not spent
+# competing with everything else starting up.
+OnStartupSec=3min
+OnUnitActiveSec=15min
+
+# The laptop case this was designed for: the lid has been shut for nine hours
+# and every scheduled run was missed. Persistent makes exactly one catch-up
+# sweep happen on wake instead of none — or, worse, nine at once.
+Persistent=true
+
+# Without jitter every BazaarAgent in the world would hit finn on the same
+# wall-clock boundary. There is currently one, but polite is polite.
+RandomizedDelaySec=90
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -95,6 +95,39 @@ export function odometerDiscrepancy(
   }
 }
 
+/**
+ * Strip claims that lean on an unreliable photo odometer reading.
+ *
+ * The gate above stops *us* generating a bad claim, but the model writes its
+ * own prose and will happily quote the number it thought it saw. Seen live:
+ * with the dashboard reading 038783 and the model reporting 39183, the haggle
+ * plan told the user to raise "instrumentbildet viser en tredje verdi på
+ * 39 183 km" with the seller — a number that does not appear on the car.
+ *
+ * So when the reading is not material, any claim resting on it is removed
+ * rather than shown. Claims about a mismatch between the ad text and the
+ * technical data survive, because those are two written sources that can be
+ * checked without squinting at a photograph.
+ */
+export function stripUnreliableOdometerClaims<T extends { claim?: string; evidence?: string }>(
+  items: readonly T[],
+  seenKm: number | null | undefined,
+  statedKm: number | undefined,
+): T[] {
+  if (seenKm == null) return [...items]
+  if (odometerDiscrepancy(seenKm, statedKm).material) return [...items]
+
+  // Match the reading in any of the ways it gets written: 39183, 39 183, 39.183.
+  const digits = String(seenKm)
+  const loose = new RegExp(digits.split("").join("[\\s.,\\u00a0]?"))
+  const mentionsPhoto = /instrumentbilde|instrumentpanel|km-teller|kilometerteller|odometer|telleren/i
+
+  return items.filter((item) => {
+    const text = `${item.claim ?? ""} ${item.evidence ?? ""}`
+    return !(loose.test(text) && mentionsPhoto.test(text))
+  })
+}
+
 /** Whether an ad describes something other than a working car. */
 export function looksLikePartsCar(description: string | null | undefined): { hit: boolean; phrase?: string } {
   if (!description) return { hit: false }

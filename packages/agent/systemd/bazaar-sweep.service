@@ -1,0 +1,30 @@
+[Unit]
+Description=BazaarAgent — sweep finn.no, value and score listings
+Documentation=https://github.com/Normal99/BazaarAgent
+# Without this the timer fires on a laptop that has no network yet after resume
+# and the sweep fails for no reason other than bad timing.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/BazaarAgent
+ExecStart=%h/BazaarAgent/bazaar sweep
+ExecStartPost=%h/BazaarAgent/bazaar score --max=8
+ExecStartPost=%h/BazaarAgent/bazaar notify
+
+# A sweep that hangs must not block the next one forever.
+TimeoutStartSec=20min
+
+# Politeness is a property of the whole system, not just the HTTP client: one
+# sweep at a time, and never two overlapping because a slow run met the timer.
+Nice=10
+IOSchedulingClass=idle
+
+# This process holds a Hugin session cookie, an OpenRouter key and a Vegvesen
+# key. Nothing here needs to write outside its own state directory.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.bazaaragent
+NoNewPrivileges=true
