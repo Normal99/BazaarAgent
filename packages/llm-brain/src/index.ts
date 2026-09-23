@@ -53,4 +53,8 @@ export {
   type StructuredResult,
 } from "./fallback.ts"
 
+// Both as a namespace and by name. The namespace keeps the surface tidy for
+// new code; the named exports let an existing consumer import what it already
+// imported without rewriting every call site.
 export * as toolProtocol from "./tool-protocol.ts"
+export * from "./tool-protocol.ts"
