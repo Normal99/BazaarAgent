@@ -152,7 +152,12 @@ export interface VehicleFacts {
   readonly powerHk?: number
   readonly engineCc?: number
   readonly kerbWeightKg?: number
+  /** NEDC-style figure where reported, which is what finn quotes. */
   readonly co2?: number
+  /** WLTP figure, materially higher than NEDC on the same vehicle. */
+  readonly co2Wltp?: number
+  /** Combined consumption, l/100 km. */
+  readonly fuelConsumption?: number
   readonly seats?: number
   readonly doors?: number
 }
@@ -171,10 +176,27 @@ export function mapVehicle(raw: unknown): VehicleFacts | undefined {
   const miljo = first<any>(tekniske.miljodata?.miljoOgdrivstoffGruppe) ?? {}
   const bruktimport = godkjenning.forstegangsGodkjenning?.bruktimport
 
-  const powerKw = Number(motor.maksNettoEffekt)
+  // Power sits under the fuel entry, not on the motor itself.
+  const powerKw = Number(first<any>(motor.drivstoff)?.maksNettoEffekt)
+
+  // Two CO2 figures are reported against different test regimes and they differ
+  // substantially — 217 WLTP against 182 NEDC on the same van. finn quotes the
+  // NEDC-style number, so that is preferred here to keep the two comparable,
+  // with WLTP kept alongside rather than silently discarded.
+  const emissions = first<any>(miljo.forbrukOgUtslipp) ?? {}
+  const wltp = emissions.wltpKjoretoyspesifikk ?? {}
+  const co2Nedc = Number(wltp.nedcCo2BlandetKjoringGPrKm)
+  const co2Wltp = Number(wltp.co2Kombinert)
+
+  // There is no drivetrain field; it follows from how many axles are driven.
+  const axles: any[] = (tekniske.akslinger?.akselGruppe ?? []).flatMap((group: any) => group?.akselListe?.aksel ?? [])
+  const driven = axles.filter((axle) => axle?.drivAksel).length
+  const drivetrain = axles.length === 0 ? undefined : driven >= 2 ? "Firehjulsdrift" : driven === 1 ? "Tohjulsdrift" : undefined
 
   return {
-    regno: kd.kjoretoyId?.kjennemerke,
+    // The registry formats plates with a space ("FT 69617"); finn does not.
+    // Left unnormalised they never join.
+    regno: typeof kd.kjoretoyId?.kjennemerke === "string" ? kd.kjoretoyId.kjennemerke.replace(/\s+/g, "") : undefined,
     vin: kd.kjoretoyId?.understellsnummer,
     euControlDue: kd.periodiskKjoretoyKontroll?.kontrollfrist,
     euControlLastApproved: kd.periodiskKjoretoyKontroll?.sistGodkjent,
@@ -187,11 +209,13 @@ export function mapVehicle(raw: unknown): VehicleFacts | undefined {
     fuel: miljo.drivstoffKodeMiljodata?.kodeNavn,
     colour: first<any>(tekniske.karosseriOgLasteplan?.rFarge)?.kodeNavn,
     gearbox: tekniske.motorOgDrivverk?.girkassetype?.kodeNavn,
-    drivetrain: tekniske.akslinger?.forbindelseMellomDrivaksler?.kodeNavn,
+    drivetrain,
     powerHk: Number.isFinite(powerKw) ? Math.round(powerKw * 1.36) : undefined,
     engineCc: Number(motor.slagvolum) || undefined,
     kerbWeightKg: Number(tekniske.vekter?.egenvekt) || undefined,
-    co2: Number(first<any>(miljo.forbrukOgUtslipp)?.co2Kombinert) || undefined,
+    co2: co2Nedc || co2Wltp || undefined,
+    co2Wltp: co2Wltp || undefined,
+    fuelConsumption: Number(wltp.forbrukKombinert) || undefined,
     seats: Number(tekniske.persontall?.sitteplasserTotalt) || undefined,
     doors: Number(first<any>(tekniske.karosseriOgLasteplan?.antallDorer)) || undefined,
   }

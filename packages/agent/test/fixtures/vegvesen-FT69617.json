@@ -1,0 +1,422 @@
+{
+ "kjoretoydataListe": [
+  {
+   "kjoretoyId": {
+    "kjennemerke": "FT 69617",
+    "understellsnummer": "WV1ZZZ7HZMH110452"
+   },
+   "forstegangsregistrering": {
+    "registrertForstegangNorgeDato": "2021-09-03"
+   },
+   "kjennemerke": [
+    {
+     "fomTidspunkt": "2021-09-03T09:06:27.126+02:00",
+     "kjennemerke": "FT 69617",
+     "kjennemerkekategori": "KJORETOY",
+     "kjennemerketype": {
+      "kodeBeskrivelse": "Sorte tegn på grønn bunn",
+      "kodeNavn": "Varebil klasse 2",
+      "kodeVerdi": "VAREBIL_KLASSE_2",
+      "tidligereKodeVerdi": []
+     }
+    }
+   ],
+   "registrering": {
+    "fomTidspunkt": "2026-09-07T10:19:04.749+02:00",
+    "kjoringensArt": {
+     "kodeBeskrivelse": "Annen egentransport.",
+     "kodeNavn": "Egentransport",
+     "kodeVerdi": "EGENTRANSP_ANNEN",
+     "tidligereKodeVerdi": []
+    },
+    "registreringsstatus": {
+     "kodeBeskrivelse": "Avregistrert",
+     "kodeNavn": "Midlertidig avregistrert",
+     "kodeVerdi": "AVREGISTRERT",
+     "tidligereKodeVerdi": []
+    },
+    "avregistrertSidenDato": "2026-09-07T10:19:04.749+02:00"
+   },
+   "godkjenning": {
+    "forstegangsGodkjenning": {
+     "forstegangRegistrertDato": "2021-09-03",
+     "fortollingOgMva": {
+      "beskrivelse": "GB VW TRA LANG 150 TDI 4M/DSG11GB KT.NR 096654243 2021-0512AK 1 20KK STK 20MK ADR 21MK ADR 21",
+      "fortollingsreferanse": "4440012100161987",
+      "linje": 22
+     },
+     "godkjenningsId": "5783219",
+     "godkjenningsundertype": {
+      "kodeNavn": "COC",
+      "kodeVerdi": "COC",
+      "tidligereKodeVerdi": []
+     },
+     "gyldigFraDato": "2021-05-20",
+     "gyldigFraDatoTid": "2021-05-20T13:03:37+02:00",
+     "unntak": []
+    },
+    "kjoretoymerknad": [
+     {
+      "merknad": "Egenvekt og nyttelast er veiledende - avhengig av utstyr",
+      "merknadtypeKode": "TYPEGODKJENNINGSMERKNAD"
+     }
+    ],
+    "registreringsbegrensninger": {
+     "registreringsbegrensning": []
+    },
+    "tekniskGodkjenning": {
+     "godkjenningsId": "5783219",
+     "godkjenningsundertype": {
+      "kodeNavn": "COC",
+      "kodeVerdi": "COC",
+      "tidligereKodeVerdi": []
+     },
+     "gyldigFraDato": "2021-05-20",
+     "gyldigFraDatoTid": "2021-05-20T13:03:37+02:00",
+     "kjoretoyklassifisering": {
+      "beskrivelse": "Varebil kl 2",
+      "efTypegodkjenning": {
+       "typegodkjenningNrTekst": "e1*2007/46*0130*39",
+       "typegodkjenningnummer": {
+        "direktiv": "2007/46",
+        "land": "e1",
+        "serie": "0130",
+        "utvidelse": "39"
+       },
+       "variant": "GDNAA320X1",
+       "versjon": "LNAD7AD7DV00116NVR24BKX2A3A"
+      },
+      "kjoretoyAvgiftsKode": {
+       "kodeBeskrivelse": "Varebil (Klasse 2),- fortollet etter 31.3.2001",
+       "kodeNavn": "Varebil Klasse 2 - etter 31.3.2001",
+       "kodeVerdi": "315",
+       "tidligereKodeVerdi": []
+      },
+      "nasjonalGodkjenning": {
+       "nasjonaltGodkjenningsAr": "2021",
+       "nasjonaltGodkjenningsHovednummer": "5367",
+       "nasjonaltGodkjenningsUndernummer": "704"
+      },
+      "spesielleKjennetegn": "Teknisk varebil, avgiftsmessig varebil kl 2",
+      "tekniskKode": {
+       "kodeBeskrivelse": "Bil for godsbefordring med tillatt totalvekt ikke over 3 500 kg (Varebil)",
+       "kodeNavn": "Varebil",
+       "kodeVerdi": "N1",
+       "tidligereKodeVerdi": []
+      },
+      "tekniskUnderkode": {
+       "kodeVerdi": "INGENKODE",
+       "tidligereKodeVerdi": []
+      },
+      "iSamsvarMedTypegodkjenning": true
+     },
+     "krav": [
+      {
+       "kravomrade": {
+        "kodeBeskrivelse": "Avgiftsklassifisering",
+        "kodeVerdi": "AVGIFTSKLASSIFISERING_00",
+        "tidligereKodeVerdi": []
+       },
+       "kravoppfyllelse": {
+        "kodeBeskrivelse": "Forskrift om engangsavgift og avgiftsvedtak",
+        "kodeVerdi": "KRAV_1",
+        "tidligereKodeVerdi": []
+       }
+      }
+     ],
+     "tekniskeData": {
+      "akslinger": {
+       "akselGruppe": [
+        {
+         "akselListe": {
+          "aksel": [
+           {
+            "antallHjul": 2,
+            "avstandTilNesteAksling": 3400,
+            "drivAksel": true,
+            "id": 1,
+            "plasseringAksel": "1",
+            "sporvidde": 1634,
+            "styreAksel": true,
+            "tekniskTillattAkselLast": 1710
+           }
+          ]
+         },
+         "id": 1,
+         "plasseringAkselGruppe": "1",
+         "tekniskTillattAkselGruppeLast": 1710
+        },
+        {
+         "akselListe": {
+          "aksel": [
+           {
+            "antallHjul": 2,
+            "drivAksel": true,
+            "id": 2,
+            "plasseringAksel": "2",
+            "sporvidde": 1640,
+            "styreAksel": false,
+            "tekniskTillattAkselLast": 1720
+           }
+          ]
+         },
+         "id": 2,
+         "plasseringAkselGruppe": "2",
+         "tekniskTillattAkselGruppeLast": 1720
+        }
+       ],
+       "antallAksler": 2
+      },
+      "dimensjoner": {
+       "bredde": 1904,
+       "hoyde": 1990,
+       "lengde": 5304,
+       "lengdeInnvendigLasteplan": 2898
+      },
+      "generelt": {
+       "fabrikant": [
+        {
+         "fabrikantNavn": "Volkswagen AG"
+        }
+       ],
+       "handelsbetegnelse": [
+        "TRANSPORTER"
+       ],
+       "merke": [
+        {
+         "merke": "VOLKSWAGEN",
+         "merkeKode": "5750"
+        }
+       ],
+       "tekniskKode": {
+        "kodeBeskrivelse": "Bil for godsbefordring med tillatt totalvekt ikke over 3 500 kg (Varebil)",
+        "kodeNavn": "Varebil",
+        "kodeVerdi": "N1",
+        "tidligereKodeVerdi": []
+       },
+       "typebetegnelse": "7J0"
+      },
+      "karosseriOgLasteplan": {
+       "antallDorer": [
+        6
+       ],
+       "dorUtforming": [],
+       "karosseritype": {
+        "kodeBeskrivelse": "Varebil. Lastebil med førerhus innebygd i karosseriet",
+        "kodeNavn": "Integrert førerhus (BB)",
+        "kodeTypeId": "TEKNISKEDATA.KAROSSERITYPE",
+        "kodeVerdi": "BB",
+        "tidligereKodeVerdi": []
+       },
+       "kjennemerketypeBak": {
+        "kodeBeskrivelse": "Stort smalt",
+        "kodeNavn": "Stort smalt",
+        "kodeTypeId": "TEKNISKEDATA.KJENNEMERKESTORRELSE",
+        "kodeVerdi": "SS",
+        "tidligereKodeVerdi": []
+       },
+       "kjennemerkestorrelseBak": {
+        "kodeBeskrivelse": "Stort smalt",
+        "kodeNavn": "Stort smalt",
+        "kodeTypeId": "TEKNISKEDATA.KJENNEMERKESTORRELSE",
+        "kodeVerdi": "SS",
+        "tidligereKodeVerdi": []
+       },
+       "kjennemerketypeForan": {
+        "kodeBeskrivelse": "Stort smalt",
+        "kodeNavn": "Stort smalt",
+        "kodeTypeId": "TEKNISKEDATA.KJENNEMERKESTORRELSE",
+        "kodeVerdi": "SS",
+        "tidligereKodeVerdi": []
+       },
+       "kjennemerkestorrelseForan": {
+        "kodeBeskrivelse": "Stort smalt",
+        "kodeNavn": "Stort smalt",
+        "kodeTypeId": "TEKNISKEDATA.KJENNEMERKESTORRELSE",
+        "kodeVerdi": "SS",
+        "tidligereKodeVerdi": []
+       },
+       "kjoringSide": "HOYRE",
+       "oppbygningUnderstellsnummer": "??????7??????????",
+       "plasseringAvDorer": {
+        "kodeBeskrivelse": "4 sidedører og 2 bakdører",
+        "kodeNavn": "4 sidedører og 2 bakdører",
+        "kodeTypeId": "TEKNISKEDATA.PLASSERINGDORER",
+        "kodeVerdi": "4_SIDE_2_BAK",
+        "tidligereKodeVerdi": []
+       },
+       "plasseringFabrikasjonsplate": [
+        {
+         "kodeBeskrivelse": "Motorrom - Bak",
+         "kodeNavn": "Motorrom - bak",
+         "kodeTypeId": "TEKNISKEDATA.PLASSERINGMERKING",
+         "kodeVerdi": "MOTORROM_BAK",
+         "tidligereKodeVerdi": []
+        }
+       ],
+       "plasseringUnderstellsnummer": [
+        {
+         "kodeBeskrivelse": "Motorrom - Høyre",
+         "kodeNavn": "Motorrom - høyre",
+         "kodeTypeId": "TEKNISKEDATA.PLASSERINGMERKING",
+         "kodeVerdi": "MOTORROM_HOYRE",
+         "tidligereKodeVerdi": []
+        }
+       ],
+       "rFarge": [
+        {
+         "kodeBeskrivelse": "herunder: Sølv metallic",
+         "kodeNavn": "Sølv",
+         "kodeTypeId": "TEKNISKEDATA.KAROSSERIFARGE",
+         "kodeVerdi": "11",
+         "tidligereKodeVerdi": []
+        }
+       ]
+      },
+      "miljodata": {
+       "euroKlasse": {
+        "kodeBeskrivelse": "Euro 6L - EF 715/2007*EF 459/2012 (med bokstavene N til ZC)",
+        "kodeNavn": "Euro 6L - EF 715/2007*EF 459/2012 (med bokstavene N til ZC)",
+        "kodeTypeId": "TEKNISKEDATA.AVGASSKODE",
+        "kodeVerdi": "6L",
+        "tidligereKodeVerdi": []
+       },
+       "miljoOgdrivstoffGruppe": [
+        {
+         "drivstoffKodeMiljodata": {
+          "kodeBeskrivelse": "Diesel",
+          "kodeNavn": "Diesel",
+          "kodeTypeId": "TEKNISKEDATA.DRIVSTOFFTYPE",
+          "kodeVerdi": "2",
+          "tidligereKodeVerdi": []
+         },
+         "forbrukOgUtslipp": [
+          {
+           "malemetode": {
+            "kodeBeskrivelse": "WLTP",
+            "kodeNavn": "MALEMETODETYPE_WLTP",
+            "kodeTypeId": "MALEMETODETYPE",
+            "kodeVerdi": "WLTP",
+            "tidligereKodeVerdi": []
+           },
+           "partikkelfilterFabrikkmontert": true,
+           "utslippCOmgPrKm": 21.4,
+           "utslippNOxMgPrKm": 40.6,
+           "utslippPartikkelAntallPrKm": 8620000000,
+           "utslippPartiklerMgPrKm": 0.34,
+           "utslippTHCogNOxMgPrKm": 52.2,
+           "wltpKjoretoyspesifikk": {
+            "co2Kombinert": 217,
+            "forbrukKombinert": 8.3,
+            "nedcForbrukBlandetKjoring": 6.9,
+            "nedcCo2BlandetKjoringGPrKm": 182
+           }
+          }
+         ],
+         "lyd": {
+          "kjorestoy": 69,
+          "standstoy": 76,
+          "stoyMalingOppgittAv": {
+           "kodeBeskrivelse": "Produsent",
+           "kodeNavn": "Produsent",
+           "kodeTypeId": "TEKNISKEDATA.KILDE_STOYMALING",
+           "kodeVerdi": "1",
+           "tidligereKodeVerdi": []
+          },
+          "vedAntallOmdreininger": 2813
+         }
+        }
+       ],
+       "okoInnovasjon": true
+      },
+      "motorOgDrivverk": {
+       "girkassetype": {
+        "kodeBeskrivelse": "Automat",
+        "kodeNavn": "Automat",
+        "kodeTypeId": "TEKNISKEDATA.GIRKASSETYPE",
+        "kodeVerdi": "A",
+        "tidligereKodeVerdi": []
+       },
+       "girutvekslingPrGir": [],
+       "hybridKategori": {
+        "kodeBeskrivelse": "Ingen",
+        "kodeNavn": "Ingen",
+        "kodeTypeId": "TEKNISKEDATA.HYBRIDKATEGORI",
+        "kodeVerdi": "INGEN",
+        "tidligereKodeVerdi": []
+       },
+       "maksimumHastighet": [
+        179
+       ],
+       "maksimumHastighetMalt": [],
+       "motor": [
+        {
+         "antallSylindre": 4,
+         "arbeidsprinsipp": {
+          "kodeBeskrivelse": "Diesel",
+          "kodeNavn": "Diesel",
+          "kodeTypeId": "TEKNISKEDATA.ARBEIDSPRINSIPP",
+          "kodeVerdi": "DIESEL",
+          "tidligereKodeVerdi": []
+         },
+         "drivstoff": [
+          {
+           "drivstoffKode": {
+            "kodeBeskrivelse": "Diesel",
+            "kodeNavn": "Diesel",
+            "kodeTypeId": "TEKNISKEDATA.DRIVSTOFFTYPE",
+            "kodeVerdi": "2",
+            "tidligereKodeVerdi": []
+           },
+           "maksNettoEffekt": 110
+          }
+         ],
+         "motorKode": "DNA",
+         "partikkelfilterMotor": true,
+         "slagvolum": 1968,
+         "sylinderArrangement": {
+          "kodeBeskrivelse": "Rekke",
+          "kodeNavn": "Rekke",
+          "kodeTypeId": "TEKNISKEDATA.SYLINDERARRANGEMENT",
+          "kodeVerdi": "REKKE",
+          "tidligereKodeVerdi": []
+         }
+        }
+       ],
+       "obd": true
+      },
+      "ovrigeTekniskeData": [],
+      "persontall": {
+       "sitteplassListe": {
+        "sitteplass": [
+         {
+          "beltestrammer": false
+         }
+        ]
+       },
+       "sitteplasserForan": 2,
+       "sitteplasserTotalt": 2
+      },
+      "vekter": {
+       "egenvekt": 2185,
+       "egenvektMinimum": 1957,
+       "nyttelast": 940,
+       "tillattTaklast": 100,
+       "tillattTilhengervektMedBrems": 2500,
+       "tillattTilhengervektUtenBrems": 750,
+       "tillattTotalvekt": 3200,
+       "tillattVertikalKoplingslast": 100,
+       "tillattVogntogvekt": 5300,
+       "vogntogvektAvhBremsesystem": []
+      }
+     }
+    },
+    "tilleggsgodkjenninger": []
+   },
+   "periodiskKjoretoyKontroll": {
+    "kontrollfrist": "2027-09-03",
+    "sistGodkjent": "2025-08-29"
+   }
+  }
+ ]
+}

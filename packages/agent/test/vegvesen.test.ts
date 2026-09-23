@@ -1,50 +1,46 @@
 import { expect, test, describe } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { mapVehicle, crossCheck, inferEuControl } from "../src/vegvesen.ts"
 
-// Shaped from a working integration against the same endpoint (Normal99/Autonett),
-// not from the published docs, which do not describe the response. Marked here
-// because it has not yet been re-verified against a live call — that needs a
-// current API key.
-const registryResponse = {
-  kjoretoydataListe: [
-    {
-      kjoretoyId: { kjennemerke: "FT69617", understellsnummer: "WV1ZZZ7HZMH110452" },
-      periodiskKjoretoyKontroll: { kontrollfrist: "2027-09-30", sistGodkjent: "2025-09-12" },
-      forstegangsregistrering: { registrertForstegangNorgeDato: "2021-09-03" },
-      godkjenning: {
-        forstegangsGodkjenning: {
-          forstegangRegistrertDato: "2021-09-03",
-          bruktimport: { kilometerstand: 98000 },
-        },
-        tekniskGodkjenning: {
-          tekniskeData: {
-            generelt: { merke: [{ merke: "VOLKSWAGEN" }], handelsbetegnelse: ["TRANSPORTER"] },
-            motorOgDrivverk: { motor: [{ maksNettoEffekt: 110, slagvolum: 1968 }], girkassetype: { kodeNavn: "Automat" } },
-            akslinger: { forbindelseMellomDrivaksler: { kodeNavn: "Firehjulsdrift" } },
-            vekter: { egenvekt: 1957 },
-            karosseriOgLasteplan: { rFarge: [{ kodeNavn: "Sølv" }], antallDorer: [6] },
-            persontall: { sitteplasserTotalt: 2 },
-            miljodata: {
-              miljoOgdrivstoffGruppe: [
-                { drivstoffKodeMiljodata: { kodeNavn: "Diesel" }, forbrukOgUtslipp: [{ co2Kombinert: 178 }] },
-              ],
-            },
-          },
-        },
-      },
-    },
-  ],
-}
+// A real response from the live Vegvesen registry, captured 2026-09-23, trimmed
+// only of subtrees the mapper never reads.
+//
+// It replaced a hand-written fixture built from another project's field paths,
+// which is worth remembering: that fixture encoded the wrong nesting, so these
+// tests passed green against a mapper that returned undefined for power, CO2
+// and drivetrain on every real vehicle. A fixture invented from documentation
+// tests the invention, not the integration.
+const registryResponse = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "vegvesen-FT69617.json"), "utf8"))
 
 describe("registry mapping", () => {
   test("extracts the EU-kontroll date the advertisement usually omits", () => {
     const facts = mapVehicle(registryResponse)!
-    expect(facts.euControlDue).toBe("2027-09-30")
-    expect(facts.euControlLastApproved).toBe("2025-09-12")
+    expect(facts.euControlDue).toBe("2027-09-03")
+    expect(facts.euControlLastApproved).toBe("2025-08-29")
   })
 
-  test("converts power from kW to hk, as Norwegian ads quote it", () => {
-    expect(mapVehicle(registryResponse)!.powerHk).toBe(150) // 110 kW
+  test("reads power from under the fuel entry, not off the motor", () => {
+    // motor[0].drivstoff[0].maksNettoEffekt = 110 kW. Reading
+    // motor[0].maksNettoEffekt gives undefined on every real vehicle.
+    expect(mapVehicle(registryResponse)!.powerHk).toBe(150)
+  })
+
+  test("normalises the plate, which the registry spaces and finn does not", () => {
+    // Registry says "FT 69617", finn says "FT69617" — unnormalised they never join.
+    expect(mapVehicle(registryResponse)!.regno).toBe("FT69617")
+  })
+
+  test("derives drivetrain by counting driven axles, as there is no such field", () => {
+    expect(mapVehicle(registryResponse)!.drivetrain).toBe("Firehjulsdrift")
+  })
+
+  test("prefers the NEDC CO2 figure finn quotes, keeping WLTP alongside", () => {
+    // The same van reports 182 NEDC and 217 WLTP; picking the wrong one makes
+    // any comparison against the ad look like a discrepancy.
+    const facts = mapVehicle(registryResponse)!
+    expect(facts.co2).toBe(182)
+    expect(facts.co2Wltp).toBe(217)
   })
 
   test("pulls the technical facts used for valuation", () => {
@@ -53,10 +49,9 @@ describe("registry mapping", () => {
     expect(facts.modelName).toBe("TRANSPORTER")
     expect(facts.fuel).toBe("Diesel")
     expect(facts.gearbox).toBe("Automat")
-    expect(facts.drivetrain).toBe("Firehjulsdrift")
     expect(facts.engineCc).toBe(1968)
-    expect(facts.kerbWeightKg).toBe(1957)
-    expect(facts.co2).toBe(178)
+    expect(facts.kerbWeightKg).toBe(2185)
+    expect(facts.fuelConsumption).toBe(8.3)
     expect(facts.vin).toBe("WV1ZZZ7HZMH110452")
   })
 
@@ -74,23 +69,26 @@ describe("registry mapping", () => {
 })
 
 describe("cross-checking the registry against the ad", () => {
+  // The captured vehicle is a domestic, non-imported van, so these build on top
+  // of the real mapped facts rather than a real import response. crossCheck is
+  // pure logic over VehicleFacts, so that is sound here — unlike the mapper,
+  // which has to meet the registry's actual nesting.
+  const imported = { ...mapVehicle(registryResponse)!, usedImport: true, importMileage: 98_000 }
+  const normalise = (findings: string[]) => findings.map((f) => f.replace(/[  ]/g, " "))
+
   test("flags a used import, which ads rarely mention", () => {
-    const findings = crossCheck(mapVehicle(registryResponse)!, { mileage: 152872 })
-    expect(findings.some((f) => f.includes("Bruktimportert"))).toBe(true)
+    expect(crossCheck(imported, { mileage: 152_872 }).some((f) => f.includes("Bruktimportert"))).toBe(true)
   })
 
   test("catches a stated mileage below what was recorded at import", () => {
     // The registry is the one source the seller does not control.
-    const findings = crossCheck(mapVehicle(registryResponse)!, { mileage: 80_000 })
-    // nb-NO formatting uses a non-breaking space as the thousands separator.
-    const normalised = findings.map((f) => f.replace(/[  ]/g, " "))
-    expect(normalised.some((f) => f.includes("98 000 km"))).toBe(true)
-    expect(normalised.some((f) => f.includes("80 000 km"))).toBe(true)
+    const findings = normalise(crossCheck(imported, { mileage: 80_000 }))
+    expect(findings.some((f) => f.includes("98 000 km"))).toBe(true)
+    expect(findings.some((f) => f.includes("80 000 km"))).toBe(true)
   })
 
-  test("says nothing when the ad and the registry agree", () => {
-    const facts = { ...mapVehicle(registryResponse)!, usedImport: false, importMileage: undefined }
-    expect(crossCheck(facts, { mileage: 152872 })).toEqual([])
+  test("says nothing about a domestic car whose ad agrees with the registry", () => {
+    expect(crossCheck(mapVehicle(registryResponse)!, { mileage: 152_872 })).toEqual([])
   })
 })
 
