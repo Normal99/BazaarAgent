@@ -13,14 +13,25 @@ import { selectImages } from "./images.ts"
 // survive translation — "selges som den er", "må påregnes", "noe å fikse på"
 // are hedges with specific weight to a Norwegian buyer.
 
+// `nullish()` rather than `optional()` throughout, and the distinction is not
+// cosmetic. A text-sourced flag has no imageIndex, and a model expressing that
+// as an explicit `null` is behaving sensibly — but Zod's `optional()` accepts
+// only absence, so `null` failed validation and triggered a repair round-trip.
+// Measured cost of getting this wrong: a wasted 16s retry on the first live
+// probe, and an escalation rate that made a working provider look unreliable.
 export const FlagSchema = z.object({
   claim: z.string(),
   /** Which evidence produced it, so the UI can link a photo claim to its photo. */
   source: z.enum(["tekst", "bilde"]),
   /** A quote from the ad, or a description of which photo. */
   evidence: z.string(),
-  severity: z.enum(["lav", "middels", "høy"]).optional(),
-  imageIndex: z.number().int().min(0).optional(),
+  severity: z.enum(["lav", "middels", "høy"]).nullish(),
+  /**
+   * Index into the images actually sent, NOT into the listing's full album.
+   * Only eight of sixteen photos go to the model, so these must be resolved
+   * through the stored `images_used` list or they point at the wrong picture.
+   */
+  imageIndex: z.number().int().min(0).nullish(),
 })
 
 export const LeverSchema = z.object({
@@ -35,7 +46,7 @@ export const AnalysisSchema = z.object({
   greenFlags: z.array(FlagSchema).max(15),
   levers: z.array(LeverSchema).max(10),
   /** Odometer read off a dashboard photo, when one is legible. */
-  odometerSeenKm: z.number().int().min(0).max(2_000_000).nullable(),
+  odometerSeenKm: z.number().int().min(0).max(2_000_000).nullish(),
   summaryNo: z.string().max(1200),
 })
 
