@@ -17,17 +17,49 @@ const api = (path) => fetch(path).then((r) => r.json())
 // Theme
 // ---------------------------------------------------------------------------
 
+/** The shape of what is coming, so the layout does not jump when it lands. */
+function skeletonFeed(n = 6) {
+  return `<div class="cards">${Array.from({ length: n }, () => `
+    <div class="skel-card">
+      <div class="skel skel-img"></div>
+      <div class="skel-body">
+        <div class="skel" style="height:15px;width:58%"></div>
+        <div class="skel" style="height:22px;width:42%"></div>
+        <div class="skel" style="height:12px;width:78%"></div>
+      </div>
+    </div>`).join("")}</div>`
+}
+
 const themeBtn = document.getElementById("theme")
 try {
   const saved = localStorage.getItem("theme")
   if (saved) document.documentElement.dataset.theme = saved
 } catch {}
+/**
+ * Whether we are currently dark: the explicit choice if one was made,
+ * otherwise the OS.
+ *
+ * This used to compare document.body's computed backgroundColor against a
+ * hardcoded rgb() string, which silently stopped working the moment the
+ * palette changed — the toggle just did nothing.
+ */
+const isDark = () =>
+  document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches
+
 themeBtn.onclick = () => {
-  const dark = getComputedStyle(document.body).backgroundColor === "rgb(15, 17, 21)"
-  const next = dark ? "light" : "dark"
+  const next = isDark() ? "light" : "dark"
   document.documentElement.dataset.theme = next
   try { localStorage.setItem("theme", next) } catch {}
-  if (location.hash.startsWith("#/deal/")) route() // redraw the chart in new colors
+  // Keep the phone's status bar in step with the app.
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.remove()
+  const meta = document.createElement("meta")
+  meta.name = "theme-color"
+  meta.content = next === "dark" ? "#0c0c0e" : "#f4f3ef"
+  document.head.appendChild(meta)
+  // The chart reads its colours from CSS variables at draw time.
+  if (location.hash.startsWith("#/deal/")) route()
 }
 
 // ---------------------------------------------------------------------------
@@ -39,6 +71,15 @@ tabs.onclick = (e) => {
   if (button) location.hash = `#/${button.dataset.view}`
 }
 back.onclick = () => history.back()
+
+const refreshBtn = document.getElementById("refresh")
+refreshBtn.onclick = async () => {
+  refreshBtn.classList.add("spin")
+  feedCache = null
+  await route()
+  // A spin that ends instantly reads as nothing having happened.
+  setTimeout(() => refreshBtn.classList.remove("spin"), 450)
+}
 addEventListener("hashchange", route)
 
 async function route() {
@@ -46,7 +87,7 @@ async function route() {
   const [, view, arg] = hash.split("/")
   back.hidden = view !== "deal"
   for (const b of tabs.children) b.classList.toggle("active", b.dataset.view === view)
-  main.innerHTML = '<p class="empty">Laster…</p>'
+  main.innerHTML = view === "deal" ? '<div class="section skel" style="height:320px"></div>' : skeletonFeed()
 
   try {
     if (view === "deal") return await viewDeal(Number(arg))
@@ -179,16 +220,27 @@ async function viewDeals({ watchOnly }) {
 
     if (pool.length === 0) {
       main.innerHTML = watchOnly
-        ? `<p class="empty">Ingen biler følges ennå.<br><span class="hint">Trykk stjernen på et funn for å følge prisen.</span></p>`
-        : `<p class="empty">Ingenting scoret ennå.<br><span class="hint">Kjør <code>./bazaar score</code>.</span></p>`
+        ? `<div class="empty"><span class="big">Ingen biler følges</span>
+             <span class="hint">Trykk stjernen på et funn, så varsler vi deg<br>når selgeren setter ned prisen.</span></div>`
+        : `<div class="empty"><span class="big">Ingenting scoret ennå</span>
+             <span class="hint">Kjør <code>./bazaar score</code> for å verdivurdere<br>annonsene som er hentet inn.</span></div>`
       return
     }
 
     main.innerHTML =
       (watchOnly ? "" : filterBar(pool.length, deals.length, feedCache.searches ?? [])) +
       (deals.length === 0
-        ? `<p class="empty">Ingen treff med disse filtrene.<br><span class="hint">Prøv å senke minste score eller heve maks pris.</span></p>`
+        ? `<div class="empty"><span class="big">Ingen treff</span>
+             <span class="hint">Prøv å senke minste score, heve maks pris<br>eller velge «Alle søk».</span></div>`
         : `<div class="cards">${deals.map(card).join("")}</div>`)
+
+    for (const [i, el] of [...main.querySelectorAll(".card")].entries()) {
+      // Only the first screenful is staggered; past that it is just latency.
+      if (i < 8) {
+        el.classList.add("rise")
+        el.style.animationDelay = `${i * 28}ms`
+      }
+    }
 
     if (!watchOnly) wireFilters(render)
     wireCards(render)

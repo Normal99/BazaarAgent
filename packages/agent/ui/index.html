@@ -4,28 +4,62 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>BazaarAgent</title>
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0c0c0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+
+<!-- Instrument Sans has the tight, slightly narrow grotesk feel this wants and
+     real tabular figures, which matter when every screen is full of prices.
+     Loaded with a system fallback so an offline phone still reads properly. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..600&display=swap">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body data-palette="#2a78d6,#eb6834">
-  <header class="topbar">
-    <button class="back" id="back" hidden aria-label="Tilbake">←</button>
-    <h1 id="title">Funn</h1>
-    <button class="theme" id="theme" aria-label="Bytt tema">◐</button>
+<body>
+  <header class="topbar" id="topbar">
+    <button class="icon back" id="back" hidden aria-label="Tilbake">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="brand" id="brandwrap">
+      <span class="mark" aria-hidden="true"></span>
+      <h1 id="title">Funn</h1>
+    </div>
+    <button class="icon" id="refresh" aria-label="Oppdater">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.7 3.3M20 5v6h-6"/></svg>
+    </button>
+    <button class="icon" id="theme" aria-label="Bytt tema">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 109 9 7 7 0 01-9-9z"/></svg>
+    </button>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button data-view="deals" class="active">Funn</button>
-    <button data-view="watch">Følger</button>
-    <button data-view="searches">Søk</button>
-    <button data-view="health">Status</button>
-  </nav>
+  <main id="main" aria-live="polite"></main>
 
-  <main id="main" aria-live="polite">
-    <p class="empty">Laster…</p>
-  </main>
+  <!-- Bottom bar on a phone: this gets used one-handed, and the top of a
+       6-inch screen is the hardest place to reach. It moves to the header on
+       a wide screen, where a thumb is not the input device. -->
+  <nav class="nav" id="tabs" aria-label="Hovedmeny">
+    <button data-view="deals" class="active">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 3 5-6 4 3"/><path d="M3 21h18"/></svg>
+      <span>Funn</span>
+    </button>
+    <button data-view="watch">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L4.2 9.7l5.4-.8z"/></svg>
+      <span>Følger</span>
+    </button>
+    <button data-view="searches">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+      <span>Søk</span>
+    </button>
+    <button data-view="health">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h3l2.5-6 4 12 2.5-6h4"/></svg>
+      <span>Status</span>
+    </button>
+  </nav>
 
   <script type="module" src="/app.js"></script>
 </body>
