@@ -37,9 +37,14 @@
     </button>
   </header>
 
-  <main id="main" aria-live="polite"></main>
+  <!-- Before <main>, and that is load-bearing rather than stylistic. On a
+       phone this is position:fixed and source order is irrelevant, but on a
+       wide screen it becomes position:sticky — and a sticky element can only
+       pin within the flow position it already occupies. Placed after a tall
+       <main> it scrolled up with the entire feed and only stuck once you had
+       scrolled past everything, which is exactly not a navigation bar.
 
-  <!-- Bottom bar on a phone: this gets used one-handed, and the top of a
+       Bottom bar on a phone: this gets used one-handed, and the top of a
        6-inch screen is the hardest place to reach. It moves to the header on
        a wide screen, where a thumb is not the input device. -->
   <nav class="nav" id="tabs" aria-label="Hovedmeny">
@@ -60,6 +65,9 @@
       <span>Status</span>
     </button>
   </nav>
+
+  <main id="main" aria-live="polite"></main>
+
 
   <script type="module" src="/app.js"></script>
 </body>
