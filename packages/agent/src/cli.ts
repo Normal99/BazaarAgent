@@ -335,6 +335,8 @@ async function corpus(args: string[]): Promise<void> {
 
 async function score(args: string[]): Promise<void> {
   const noLlm = args.includes("--no-llm")
+  const projects = args.includes("--projects")
+  const projectBudget = Number(args.find((a) => a.startsWith("--project-budget="))?.split("=")[1] ?? NaN)
   const limit = Number(args.find((a) => a.startsWith("--max="))?.split("=")[1] ?? 10)
   const store = new Store()
   const budget = store.listSearches().find((s) => s.budget_nok)?.budget_nok ?? undefined
@@ -345,6 +347,8 @@ async function score(args: string[]): Promise<void> {
   const enriched = await enrichTop(results, {
     store,
     budget: budget ?? undefined,
+    projects,
+    projectBudget: Number.isFinite(projectBudget) ? projectBudget : undefined,
     noLlm,
     maxAnalyses: limit,
     onProgress: (line) => console.log(line),
@@ -364,6 +368,12 @@ function printDeal(deal: ScoredListing): void {
   const trip = home && listing.lat != null && listing.lon != null ? travelCost(home, { lat: listing.lat, lon: listing.lon }) : undefined
   console.log(`        ${listing.dealer_segment ?? "?"} · ${listing.location ?? "?"}${trip ? ` · ~${Math.round(trip.roadKm)} km (${kr(trip.costNok)} t/r, ${trip.hours.toFixed(1)} t)` : ""}`)
   console.log(`        ${listing.url}`)
+  if (deal.project) {
+    const p = deal.project
+    console.log(`        🔧 PROSJEKT — ${p.viable ? "verdt å gjøre" : "for tynn margin"}`)
+    console.log(`           kjøp ${kr(p.asking)} + reparasjon ${kr(p.repairLow)}–${kr(p.repairHigh)} = ${kr(p.allInLow)}–${kr(p.allInHigh)}`)
+    console.log(`           kjørbar verdi ${kr(valuation.fairValue)} · margin ${kr(p.headroomLow)}–${kr(p.headroomHigh)}`)
+  }
   if (plan?.haggleableIntoBudget) console.log(`        💬 ${kr(plan.overBudgetBy!)} over budsjett — forhandlebart ned til ${kr(plan.target)}`)
   else if (plan && plan.target < listing.price) console.log(`        💬 mål ${kr(plan.target)} · gå fra ved ${kr(plan.walkAway)}`)
   for (const finding of deal.registryFindings) console.log(`        ⚠ ${finding}`)
@@ -562,6 +572,9 @@ const USAGE = `bazaar — finn.no deal hunter
   reap [--stale=H] [--max=N]           verify stale listings; retire the sold ones
   corpus [--pages=N] [--models=N]      deepen comparables for watched models
   score [--no-llm] [--max=N]           value, enrich and rank everything swept
+       [--projects] [--project-budget=N]
+                                       also rank broken cars on what is left
+                                       once they are fixed
   deals [--min=N]                      show the ranked feed
   plan <ad_id>                         full haggle plan for one car
   notify setup | test                  configure ntfy, or send a test

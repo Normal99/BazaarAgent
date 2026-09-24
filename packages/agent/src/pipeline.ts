@@ -2,9 +2,10 @@ import { Store, type ListingRow } from "./store.ts"
 import { PoliteClient } from "./http.ts"
 import { parseItemPage } from "./finn/item.ts"
 import { valueListing, isFailure, type Valuation } from "./value/comps.ts"
-import { scoreListing, looksLikePartsCar, odometerDiscrepancy, stripUnreliableOdometerClaims } from "./value/score.ts"
+import { scoreListing, looksLikePartsCar, odometerDiscrepancy, stripUnreliableOdometerClaims, SUSPICION_THRESHOLD } from "./value/score.ts"
 import { matchAll, summarise, type Requirement, type RequirementMatch } from "./value/requirements.ts"
 import { travelCost, distancePenalty } from "./value/distance.ts"
+import { classifyCondition, detectFaults, estimateRepair, assessProject, projectScore, type ProjectAssessment } from "./value/project.ts"
 import { loadHome } from "./home.ts"
 import { buildHagglePlan, type HagglePlan, type Lever } from "./value/haggle.ts"
 import { analyzeListing, type Analysis } from "./llm/analyze.ts"
@@ -31,6 +32,10 @@ export interface PipelineOptions {
   /** Cap on LLM calls per run, so one sweep cannot run away with the budget. */
   readonly maxAnalyses?: number
   readonly budget?: number
+  /** Include cars that need work, judged on what is left after fixing them. */
+  readonly projects?: boolean
+  /** Total to have in a project car, bought and repaired. Defaults to budget. */
+  readonly projectBudget?: number
   /** Defaults to the union across active searches. */
   readonly requirements?: readonly Requirement[]
   readonly onProgress?: (line: string) => void
@@ -45,6 +50,8 @@ export interface ScoredListing {
   readonly plan?: HagglePlan
   readonly registryFindings: string[]
   readonly requirements?: RequirementMatch[]
+  readonly condition?: "running" | "project" | "scrap"
+  readonly project?: ProjectAssessment
 }
 
 /** Value every live listing. Free, so it runs over everything. */
@@ -126,15 +133,43 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
   const maxAnalyses = options.maxAnalyses ?? 10
   const log = options.onProgress ?? (() => {})
 
-  const worth = candidates.filter(
-    (c) => c.valuation.confidence !== "low" && (c.valuation.residualPct >= minResidual || (options.budget !== undefined && c.listing.price > options.budget)),
-  )
-  log(`${worth.length} of ${candidates.length} worth enriching (confidence ≥ medium, residual ≥ ${(minResidual * 100).toFixed(0)}%)`)
+  // Projects hide from the ordinary gate, and would hide from themselves
+  // without this. A car that does not run is far under market, which trips the
+  // "too good to be true" penalty added to catch parts cars — so it scores
+  // badly, never gets its detail page fetched, and can never be recognised as
+  // a project in the first place. In projects mode the deeply-underpriced are
+  // admitted precisely because they are suspicious: that is where the broken
+  // ones live.
+  const worth = candidates.filter((c) => {
+    if (c.valuation.confidence === "low") return false
+    if (c.valuation.residualPct >= minResidual) return true
+    if (options.budget !== undefined && c.listing.price > options.budget) return true
+    return false
+  })
+  // They are not merely absent from the queue, they are buried in it: the
+  // suspicion penalty pushes them to the bottom by score, and a --max of 30
+  // never reaches them. So in projects mode they are promoted, not appended.
+  const isSuspicious = (c: ScoredListing) => c.valuation.residualPct > SUSPICION_THRESHOLD
+  const suspicious = options.projects ? worth.filter(isSuspicious) : []
+  if (suspicious.length > 0) log(`${suspicious.length} deeply underpriced — checking whether they are projects rather than wrecks`)
+
+  // Interleaved rather than front-loaded: one --max should not be spent
+  // entirely on one kind.
+  const queue = options.projects ? [] : [...worth]
+  if (options.projects) {
+    const ordinary = worth.filter((c) => !isSuspicious(c))
+    const maxLen = Math.max(ordinary.length, suspicious.length)
+    for (let i = 0; i < maxLen; i++) {
+      if (i < ordinary.length) queue.push(ordinary[i]!)
+      if (i < suspicious.length) queue.push(suspicious[i]!)
+    }
+  }
+  log(`${queue.length} of ${candidates.length} worth enriching (confidence ≥ medium, residual ≥ ${(minResidual * 100).toFixed(0)}%)`)
 
   const out: ScoredListing[] = []
   let analysed = 0
 
-  for (const candidate of worth.slice(0, maxAnalyses)) {
+  for (const candidate of queue.slice(0, maxAnalyses)) {
     const { listing } = candidate
     let specs = store.specs(listing.ad_id)
 
@@ -163,20 +198,50 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
       }
     }
 
-    // A parts car is not a bargain, and the cheapest way to find out is the
-    // seller's own words. This runs before the LLM so a wreck never reaches
-    // the feed, let alone a notification.
+    // A car that cannot be driven home is not a bargain — unless you own a
+    // workshop, in which case it is the whole point. So classify rather than
+    // disqualify: scrap is still thrown out, but a known, bounded fault is
+    // priced instead.
+    const condition = classifyCondition(specs?.description)
     const partsCar = looksLikePartsCar(specs?.description)
-    if (partsCar.hit) {
+
+    if (condition === "scrap" || (partsCar.hit && condition !== "project")) {
       store.saveValuation(listing.ad_id, {
         fairValue: candidate.valuation.fairValue,
         residualPct: candidate.valuation.residualPct,
         compCount: candidate.valuation.selection.comps.length,
         score: 0,
-        model: { tier: candidate.valuation.selection.tier, confidence: candidate.valuation.confidence, disqualified: `ikke kjørbar: «${partsCar.phrase}»` },
+        condition: "scrap",
+        model: { tier: candidate.valuation.selection.tier, confidence: candidate.valuation.confidence, disqualified: `ikke kjørbar: «${partsCar.phrase ?? "delebil"}»` },
       })
-      log(`  ${listing.ad_id}: skipped — «${partsCar.phrase}»`)
+      log(`  ${listing.ad_id}: skipped — «${partsCar.phrase ?? "delebil"}»`)
       continue
+    }
+
+    // The comps are all running cars, so fairValue is what this is worth once
+    // it works. That is exactly the number a project needs measuring against.
+    let project: ProjectAssessment | undefined
+    if (condition === "project") {
+      if (!options.projects) {
+        log(`  ${listing.ad_id}: prosjektbil, hoppet over (bruk --projects)`)
+        continue
+      }
+      const repair = estimateRepair(detectFaults(specs?.description))
+      project = assessProject({
+        fairValueWorking: candidate.valuation.fairValue,
+        asking: listing.price,
+        repair,
+        budget: options.projectBudget ?? options.budget,
+        omregFee:
+          specs?.price_excl_reg && specs.price_excl_reg > 0 && specs.price_excl_reg < listing.price
+            ? listing.price - specs.price_excl_reg
+            : undefined,
+      })
+      log(
+        `  ${listing.ad_id}: prosjekt — ${repair.faults.map((f) => f.label).join(", ")} · ` +
+          `reparasjon ${repair.lowNok.toLocaleString("nb-NO")}–${repair.highNok.toLocaleString("nb-NO")} kr · ` +
+          `margin ${Math.round(project.headroomLow).toLocaleString("nb-NO")} kr${project.viable ? "" : " (for tynn)"}`,
+      )
     }
 
     const fields: Record<string, string> = specs?.fields_json ? JSON.parse(specs.fields_json) : {}
@@ -298,15 +363,21 @@ export async function enrichTop(candidates: ScoredListing[], options: PipelineOp
       distance: distanceFor(loadHome(), listing),
       isAuction: listing.listing_type === "auction",
     })
+    // A project is not ranked by how far under market it is — of course it is
+    // under market, it does not run. It is ranked by what is left afterwards.
+    const finalScore = project ? projectScore(project, candidate.valuation.fairValue) : score
+
     store.saveValuation(listing.ad_id, {
       fairValue: candidate.valuation.fairValue,
       residualPct: candidate.valuation.residualPct,
       compCount: candidate.valuation.selection.comps.length,
-      score,
+      score: finalScore,
+      condition,
+      project,
       model: { tier: candidate.valuation.selection.tier, confidence: candidate.valuation.confidence, parts, requirements: matches },
     })
 
-    out.push({ ...candidate, score, parts, analysis, plan, registryFindings, requirements: matches })
+    out.push({ ...candidate, score: finalScore, parts, analysis, plan, registryFindings, requirements: matches, condition, project })
   }
 
   out.sort((a, b) => b.score - a.score)

@@ -105,7 +105,7 @@ async function route() {
 // ---------------------------------------------------------------------------
 
 const FILTER_KEY = "bazaar.filters"
-const defaultFilters = () => ({ sort: "score", minScore: 0, maxPrice: null, seller: "alle", hideAuction: false, q: "", searchId: null })
+const defaultFilters = () => ({ sort: "score", minScore: 0, maxPrice: null, seller: "alle", hideAuction: false, q: "", searchId: null, condition: "running" })
 
 function loadFilters() {
   try {
@@ -136,6 +136,16 @@ function applyFilters(deals) {
     .filter((d) => (d.score ?? 0) >= filters.minScore)
     .filter((d) => (filters.maxPrice == null ? true : d.price <= filters.maxPrice))
     .filter((d) => (filters.seller === "alle" ? true : (d.dealerSegment ?? "").toLowerCase().startsWith(filters.seller)))
+    // Projects are their own mode rather than mixed in: a car that does not
+    // run is not a worse version of one that does, it is a different purchase
+    // with different arithmetic.
+    .filter((d) =>
+      filters.condition === "alle"
+        ? d.condition !== "scrap"
+        : filters.condition === "project"
+          ? d.condition === "project"
+          : d.condition !== "project" && d.condition !== "scrap",
+    )
     .filter((d) => (filters.hideAuction ? d.listingType !== "auction" : true))
     // A mixed feed from five hunts is hard to reason about; narrowing to one
     // is the first thing you want once more than one search exists.
@@ -147,7 +157,8 @@ function applyFilters(deals) {
 function filterBar(total, shown, searches = []) {
   const opts = Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${filters.sort === k ? " selected" : ""}>${v.label}</option>`).join("")
   const active =
-    filters.minScore > 0 || filters.maxPrice != null || filters.seller !== "alle" || filters.hideAuction || filters.q || filters.searchId != null
+    filters.minScore > 0 || filters.maxPrice != null || filters.seller !== "alle" || filters.hideAuction || filters.q ||
+    filters.searchId != null || filters.condition !== "running"
   return `<div class="filters">
     <div class="filter-row">
       <input id="f-q" class="search" type="search" placeholder="Søk merke, modell, sted…" value="${esc(filters.q)}">
@@ -163,6 +174,11 @@ function filterBar(total, shown, searches = []) {
         <input id="f-score" type="range" min="0" max="10" step="0.5" value="${filters.minScore}"></label>
       <label>Maks pris
         <input id="f-price" type="number" inputmode="numeric" placeholder="ingen grense" value="${filters.maxPrice ?? ""}"></label>
+      <div class="seg" role="group" aria-label="Tilstand">
+        ${[["running", "Kjørbare"], ["project", "Prosjekt"], ["alle", "Begge"]]
+          .map(([v, label]) => `<button data-cond="${v}" class="${filters.condition === v ? "on" : ""}">${label}</button>`)
+          .join("")}
+      </div>
       <div class="seg" role="group" aria-label="Selger">
         ${["alle", "privat", "forhandler"].map((v) => `<button data-seller="${v}" class="${filters.seller === v ? "on" : ""}">${v[0].toUpperCase()}${v.slice(1)}</button>`).join("")}
       </div>
@@ -200,6 +216,7 @@ function wireFilters(rerender) {
   const auction = $("f-auction")
   if (auction) auction.onchange = (e) => update({ hideAuction: e.target.checked })
   for (const b of document.querySelectorAll("[data-seller]")) b.onclick = () => update({ seller: b.dataset.seller })
+  for (const b of document.querySelectorAll("[data-cond]")) b.onclick = () => update({ condition: b.dataset.cond })
   for (const b of document.querySelectorAll("[data-search]"))
     b.onclick = () => update({ searchId: b.dataset.search ? Number(b.dataset.search) : null })
   const reset = $("f-reset")
@@ -288,6 +305,8 @@ function card(d) {
   }
   // A repost means it did not sell last time — invisible on finn, and the
   // strongest thing you can walk into a negotiation knowing.
+  if (d.condition === "project")
+    badges.push(`<span class="badge project">🔧 prosjekt${d.project ? ` · alt inn ${kr(d.project.allInHigh)}` : ""}</span>`)
   if (d.relisted) badges.push('<span class="badge relist">lagt ut på nytt</span>')
   if (d.listingType === "auction") badges.push('<span class="badge low">auksjon — startbud</span>')
   if (d.confidence === "low") badges.push('<span class="badge low">usikkert anslag</span>')
@@ -374,6 +393,23 @@ async function viewDeal(adId) {
         <dt>Sikkerhet</dt><dd>${esc(v.confidence ?? "—")}</dd>
       </dl>
       ${v.confidence === "low" ? '<p style="color:var(--warn);font-size:13px;margin:10px 0 0">Få eller ulike sammenligningsbiler — bruk tallet som pekepinn, ikke som argument.</p>' : ""}
+    </div>` : ""}
+
+    ${d.project ? `<div class="section">
+      <h2>Prosjektregnestykke</h2>
+      <dl class="figures">
+        <dt>Kjøpspris</dt><dd>${kr(d.project.asking)}</dd>
+        <dt>Reparasjon (anslag)</dt><dd>${kr(d.project.repairLow)} – ${kr(d.project.repairHigh)}</dd>
+        <dt>Alt inkludert</dt><dd>${kr(d.project.allInLow)} – ${kr(d.project.allInHigh)}</dd>
+        <dt>Verdi i kjørbar stand</dt><dd>${kr(v?.fairValue)}</dd>
+      </dl>
+      <dl class="figures strong" style="margin-top:10px;border-top:1px solid var(--line-soft);padding-top:12px">
+        <dt>Margin</dt><dd>${kr(d.project.headroomLow)} – ${kr(d.project.headroomHigh)}</dd>
+      </dl>
+      <p style="margin:12px 0 0;font-size:14px;color:${d.project.viable ? "var(--good)" : "var(--bad)"}">
+        ${d.project.viable ? "Verdt å gjøre — også om reparasjonen havner i øvre ende." : "For tynn margin til å tåle overraskelser."}
+      </p>
+      <ul class="rationale" style="margin-top:8px">${d.project.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
     </div>` : ""}
 
     ${v?.parts?.length ? `<div class="section">

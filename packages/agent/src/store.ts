@@ -225,6 +225,8 @@ export interface DealRow {
   readonly comp_count: number
   readonly score: number | null
   readonly model_json: string | null
+  readonly condition: string | null
+  readonly project_json: string | null
   readonly summary: string | null
   readonly levers_json: string | null
   readonly flags_json: string | null
@@ -280,6 +282,8 @@ export class Store {
 
     add("searches", "requirements_json", "TEXT")
     add("listings", "listing_type", "TEXT")
+    add("valuations", "condition", "TEXT")
+    add("valuations", "project_json", "TEXT")
     this.db.exec(`CREATE TABLE IF NOT EXISTS listing_searches (
       ad_id INTEGER NOT NULL, search_id INTEGER NOT NULL, PRIMARY KEY (ad_id, search_id))`)
 
@@ -655,15 +659,29 @@ export class Store {
   // Valuations and analyses
   // -------------------------------------------------------------------------
 
-  saveValuation(adId: number, v: { fairValue: number; residualPct: number; compCount: number; score: number; model: unknown }): void {
+  saveValuation(
+    adId: number,
+    v: { fairValue: number; residualPct: number; compCount: number; score: number; model: unknown; condition?: string; project?: unknown },
+  ): void {
     this.db
       .query(
-        `INSERT INTO valuations (ad_id, computed_at, fair_value, residual_pct, comp_count, score, model_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO valuations (ad_id, computed_at, fair_value, residual_pct, comp_count, score, model_json, condition, project_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(ad_id) DO UPDATE SET computed_at=excluded.computed_at, fair_value=excluded.fair_value,
-           residual_pct=excluded.residual_pct, comp_count=excluded.comp_count, score=excluded.score, model_json=excluded.model_json`,
+           residual_pct=excluded.residual_pct, comp_count=excluded.comp_count, score=excluded.score,
+           model_json=excluded.model_json, condition=excluded.condition, project_json=excluded.project_json`,
       )
-      .run(adId, Date.now(), Math.round(v.fairValue), v.residualPct, v.compCount, v.score, JSON.stringify(v.model))
+      .run(
+        adId,
+        Date.now(),
+        Math.round(v.fairValue),
+        v.residualPct,
+        v.compCount,
+        v.score,
+        JSON.stringify(v.model),
+        v.condition ?? "running",
+        v.project ? JSON.stringify(v.project) : null,
+      )
   }
 
   saveAnalysis(adId: number, a: { flags: unknown; levers: unknown; odometerSeenKm?: number | null; imagesUsed: string[]; summary: string; provider: string; requirements?: unknown }): void {
@@ -729,7 +747,7 @@ export class Store {
       .query<DealRow, [number, number]>(
         `SELECT l.ad_id, l.heading, l.url, l.year, l.mileage, l.price, l.dealer_segment, l.location,
                 l.listing_type,
-                v.fair_value, v.residual_pct, v.comp_count, v.score, v.model_json,
+                v.fair_value, v.residual_pct, v.comp_count, v.score, v.model_json, v.condition, v.project_json,
                 a.summary, a.levers_json, a.flags_json, a.provider
          FROM listings l
          JOIN valuations v ON v.ad_id = l.ad_id

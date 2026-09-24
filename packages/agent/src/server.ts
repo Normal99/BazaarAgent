@@ -134,6 +134,8 @@ function deals(store: Store, url: URL) {
         score: row.score,
         confidence: model.confidence ?? null,
         listingType: row.listing_type,
+        condition: row.condition ?? "running",
+        project: row.project_json ? JSON.parse(row.project_json) : null,
         // The score breakdown was computed and stored from the start and never
         // shown. A ranking you cannot interrogate is one you end up ignoring.
         parts: model.parts ?? [],
@@ -249,6 +251,8 @@ function dealDetail(store: Store, adId: number): Response {
         return { roadKm: Math.round(t.roadKm), costNok: Math.round(t.costNok), hours: t.hours, note: t.note, from: home.label }
       })(),
     },
+    condition: row?.condition ?? "running",
+    project: row?.project_json ? JSON.parse(row.project_json) : null,
     valuation: row
       ? {
           fairValue: row.fair_value,

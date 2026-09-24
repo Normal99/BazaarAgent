@@ -343,6 +343,7 @@ main { padding: 18px var(--gutter) 28px; max-width: 980px; margin: 0 auto; }
 .badge.over   { background: var(--bad-bg);  color: var(--bad); }
 .badge.haggle { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
 .badge.relist { background: var(--warn-bg); color: var(--warn); }
+.badge.project { background: color-mix(in srgb, var(--series-1) 15%, transparent); color: var(--series-1); }
 .badge.low    { background: var(--raised);  color: var(--ink-3); }
 
 /* ---------------------------------------------------------------- skeleton */
