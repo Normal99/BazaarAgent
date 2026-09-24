@@ -747,11 +747,88 @@ async function homeSection() {
   </div>`
 }
 
+// ---------------------------------------------------------------------------
+// Running the pipeline by hand
+// ---------------------------------------------------------------------------
+
+const JOBS = [
+  { name: "sweep",  label: "Hent nye annonser", hint: "Sjekker alle søkene dine på FINN nå." },
+  { name: "score",  label: "Verdivurder",       hint: "Rangerer det som er hentet inn." },
+  { name: "corpus", label: "Utvid grunnlaget",  hint: "Henter flere biler av samme modell for bedre anslag." },
+  { name: "reap",   label: "Rydd solgte",       hint: "Sjekker om annonser er borte fra FINN." },
+  { name: "notify", label: "Send varsler",      hint: "Pusher nye funn til telefonen." },
+]
+
+let jobPoll = null
+
+function jobsPanel(state) {
+  const running = state.current?.status === "running"
+  const shown = state.current ?? state.last
+  const busy = state.lock && !running
+
+  return `<div class="section">
+    <h2>Kjør nå</h2>
+    <p style="margin:0 0 12px;color:var(--ink-3);font-size:13px">
+      Timeren går hvert 15. minutt. Dette starter jobben med en gang.</p>
+    <div class="jobgrid">
+      ${JOBS.map((j) => `<button class="jobbtn" data-job="${j.name}" ${running || busy ? "disabled" : ""} title="${esc(j.hint)}">
+        ${esc(j.label)}</button>`).join("")}
+    </div>
+    ${busy ? `<p class="joblock">⏳ «${esc(state.lock.task)}» kjører allerede (startet av tidsuret). Knappene åpner seg når den er ferdig.</p>` : ""}
+    ${shown ? `<div class="joblog ${shown.status}">
+      <div class="joblog-head">
+        ${running ? '<span class="spinner" aria-hidden="true"></span>' : ""}
+        <strong>${esc(shown.name)}</strong>
+        <span>${shown.status === "running" ? "kjører…" : shown.status === "done" ? "ferdig" : shown.status === "blocked" ? "opptatt" : "feilet"}</span>
+        <span class="joblog-time">${Math.round(((shown.finishedAt ?? Date.now()) - shown.startedAt) / 1000)}s</span>
+      </div>
+      <pre>${esc(shown.log.slice(-14).join("\n"))}${shown.error ? `\n✗ ${esc(shown.error)}` : ""}</pre>
+    </div>` : ""}
+  </div>`
+}
+
+async function wireJobs(rerender) {
+  for (const b of main.querySelectorAll("[data-job]")) {
+    b.onclick = async () => {
+      b.disabled = true
+      await fetch(`/api/jobs/${b.dataset.job}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // Manual runs include projects: someone pressing the button is looking
+        // for anything, not just the cars that drive.
+        body: JSON.stringify({ projects: true, maxAnalyses: 8 }),
+      })
+      rerender()
+    }
+  }
+}
+
+/** Poll while something is running, and stop as soon as it is not. */
+function watchJobs(rerender) {
+  clearInterval(jobPoll)
+  jobPoll = setInterval(async () => {
+    const state = await api("/api/jobs")
+    if (!location.hash.startsWith("#/health")) { clearInterval(jobPoll); return }
+    rerender(state)
+    if (state.current?.status !== "running") {
+      clearInterval(jobPoll)
+      // Fresh data landed; the feed it came from is now stale.
+      feedCache = null
+    }
+  }, 1200)
+}
+
 async function viewHealth() {
   title.textContent = "Status"
   const h = await api("/api/health")
+  const jobs = await api("/api/jobs")
   const conf = Object.fromEntries(h.confidence.map((r) => [r.c ?? "?", r.n]))
-  main.innerHTML = `
+  const render = (state = jobs) => {
+    main.innerHTML = jobsPanel(state) + body
+    wireJobs(() => { watchJobs(render); render({ ...state, current: { name: "?", startedAt: Date.now(), status: "running", log: ["Starter…"] } }) })
+  }
+
+  const body = `
     <div class="section">
       <h2>Datagrunnlag</h2>
       <dl class="figures">
@@ -780,6 +857,9 @@ async function viewHealth() {
       <table class="data"><thead><tr><th>Modell</th><th>Antall</th></tr></thead>
       <tbody>${h.topModels.map((m) => `<tr><td>${esc(m.make)} ${esc(m.series ?? "")}</td><td>${m.n}</td></tr>`).join("")}</tbody></table>
     </div>`
+
+  render()
+  if (jobs.current?.status === "running") watchJobs(render)
 }
 
 route()

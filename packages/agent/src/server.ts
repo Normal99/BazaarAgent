@@ -8,6 +8,7 @@ import { parseRequirements, summarise, type RequirementMatch } from "./value/req
 import { euControlFor } from "./pipeline.ts"
 import { travelCost } from "./value/distance.ts"
 import { loadHome, setDistanceScoring } from "./home.ts"
+import { startJob, jobStatus, type JobName } from "./jobs.ts"
 import { stripUnreliableOdometerClaims } from "./value/score.ts"
 
 // A small JSON API plus the static PWA. One server, reached from a phone over
@@ -64,6 +65,14 @@ export function startServer(options: ServerOptions = {}) {
           return json({ error: "method not allowed" }, 405)
         }
         if (path === "/api/health") return json(health(store))
+        if (path === "/api/jobs") return json(jobStatus())
+        if (path.startsWith("/api/jobs/")) {
+          if (request.method !== "POST") return json({ error: "method not allowed" }, 405)
+          const name = path.slice("/api/jobs/".length) as JobName
+          if (!["sweep", "score", "corpus", "reap", "notify"].includes(name)) return json({ error: `unknown job ${name}` }, 400)
+          const body = (await request.json().catch(() => ({}))) as { projects?: boolean; noLlm?: boolean; maxAnalyses?: number }
+          return json(startJob(name, body))
+        }
         if (path === "/api/home") {
           if (request.method !== "POST") return json(loadHome() ?? null)
           const body = (await request.json()) as { scoreDistance?: boolean; weight?: number }

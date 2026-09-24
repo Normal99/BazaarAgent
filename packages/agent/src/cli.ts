@@ -18,6 +18,7 @@ import { startServer } from "./server.ts"
 import { reap } from "./reap.ts"
 import { loadHome, saveHome, resolveHome, setDistanceScoring } from "./home.ts"
 import { travelCost } from "./value/distance.ts"
+import { acquire } from "./lock.ts"
 
 const kr = (n: number) => `${Math.round(n).toLocaleString("nb-NO")} kr`
 
@@ -588,6 +589,21 @@ const USAGE = `bazaar — finn.no deal hunter
 `
 
 const [command, ...rest] = process.argv.slice(2)
+
+// Anything that talks to finn takes the shared lock. The web UI can start the
+// same work, and two processes each politely rate-limited still add up to
+// twice the traffic finn sees.
+const NEEDS_LOCK = new Set(["sweep", "score", "corpus", "reap"])
+let release: (() => void) | undefined
+if (command && NEEDS_LOCK.has(command)) {
+  const attempt = acquire(command)
+  if (!attempt.ok) {
+    console.error(`✗ «${attempt.held.task}» kjører allerede (pid ${attempt.held.pid}). Prøv igjen om litt.`)
+    process.exit(0) // Not a failure: the work is being done by someone else.
+  }
+  release = () => attempt.lock.release()
+}
+
 try {
   switch (command) {
     case "provider": await providerCmd(rest); break
@@ -608,5 +624,8 @@ try {
   }
 } catch (error) {
   console.error(`✗ ${error instanceof Error ? error.message : String(error)}`)
+  release?.()
   process.exit(1)
+} finally {
+  release?.()
 }

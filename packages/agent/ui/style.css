@@ -420,6 +420,44 @@ ul.findings a:hover { text-decoration: underline; }
 .ghostbtn.danger:hover { border-color: var(--bad); background: var(--bad-bg); }
 .section.paused { opacity: .55; }
 
+/* ---------------------------------------------------------------- jobs */
+
+.jobgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.jobbtn {
+  padding: 12px 10px; border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  font-size: 14px; font-weight: 550;
+  transition: all .15s var(--ease);
+}
+.jobbtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.jobbtn:active:not(:disabled) { transform: scale(.98); }
+.jobbtn:disabled { opacity: .45; cursor: not-allowed; }
+
+.joblock { margin: 12px 0 0; font-size: 13px; color: var(--warn); }
+
+.joblog { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.joblog-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px; background: var(--raised);
+  font-size: 13px; color: var(--ink-2);
+}
+.joblog-head strong { color: var(--ink); font-weight: 600; }
+.joblog-time { margin-left: auto; color: var(--ink-3); }
+.joblog.failed .joblog-head { color: var(--bad); }
+.joblog.done .joblog-head strong { color: var(--good); }
+.joblog pre {
+  margin: 0; padding: 12px; max-height: 220px; overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px; line-height: 1.55; color: var(--ink-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.spinner {
+  width: 13px; height: 13px; flex-shrink: 0; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+
 /* ---------------------------------------------------------------- score bars */
 
 ul.bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
